@@ -28,9 +28,8 @@ class ItemIn(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     value: str = Field(min_length=1, max_length=10000)
     category: str = 'Secret'
-class ShareIn(BaseModel):
-    expires_hours: int = Field(default=24, ge=1, le=168)
-    access_password: str | None = None
+class ItemsImportIn(BaseModel):
+    items: list[ItemIn]
 
 def token_for(user):
     return jwt.encode({'sub': user['id'], 'email': user['email'], 'exp': datetime.now(timezone.utc) + timedelta(hours=12)}, JWT_SECRET, algorithm='HS256')
@@ -107,17 +106,13 @@ async def delete_item(item_id: str, authorization: str | None = Header(default=N
     if not result.deleted_count: raise HTTPException(404,'Item not found')
     return {'ok':True}
 
-@router.post('/items/{item_id}/share')
-async def share_item(item_id: str, data: ShareIn, authorization: str | None = Header(default=None)):
-    user=auth_user(authorization); doc=await db.items.find_one({'id':item_id,'user_id':user['sub']},{'_id':0})
-    if not doc: raise HTTPException(404,'Item not found')
-    share=secrets.token_urlsafe(24); await db.shares.insert_one({'token':share,'item_id':item_id,'expires':(datetime.now(timezone.utc)+timedelta(hours=data.expires_hours)).isoformat(),'password':pwd.hash(data.access_password) if data.access_password else None}); return {'token':share,'expires':data.expires_hours}
-
-@router.get('/shares/{share_token}')
-async def get_share(share_token: str):
-    doc=await db.shares.find_one({'token':share_token},{'_id':0})
-    if not doc or datetime.fromisoformat(doc['expires']) < datetime.now(timezone.utc): raise HTTPException(404,'Share expired')
-    item=await db.items.find_one({'id':doc['item_id']},{'_id':0}); return {'name':item['name'],'value':fernet.decrypt(item['secret'].encode()).decode()} if not doc.get('password') else {'name':item['name'],'locked':True}
+@router.post('/items/import')
+async def import_items(data: ItemsImportIn, authorization: str | None = Header(default=None)):
+    user=auth_user(authorization); now=datetime.now(timezone.utc).isoformat(); created=[]
+    for item in data.items:
+        doc={'id':str(uuid.uuid4()),'user_id':user['sub'],'name':item.name,'category':item.category,'secret':fernet.encrypt(item.value.encode()).decode(),'created_at':now,'updated_at':now}
+        await db.items.insert_one(doc); created.append(safe_item(doc))
+    return {'count':len(created),'items':created}
 
 @router.post('/auth/recovery')
 async def recovery(data: dict):

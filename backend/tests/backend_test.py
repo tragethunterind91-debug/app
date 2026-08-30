@@ -34,15 +34,28 @@ def test_auth_and_item_lifecycle():
     assert updated.status_code == 200 and updated.json()["name"] == "TEST Updated"
     assert s.get(f"{BASE_URL}/api/items/{item_id}/value", headers=headers).json()["value"] == "new-secret"
 
+    # Sharing feature removed — verify 404
     share = s.post(f"{BASE_URL}/api/items/{item_id}/share", headers=headers, json={"expires_hours": 1})
-    assert share.status_code == 200
-    shared = s.get(f"{BASE_URL}/api/shares/{share.json()['token']}")
-    assert shared.status_code == 200 and shared.json()["value"] == "new-secret"
+    assert share.status_code == 404, f"Sharing should be removed but got {share.status_code}"
     recovery = s.post(f"{BASE_URL}/api/auth/recovery", json={"email": email})
     assert recovery.status_code == 200 and recovery.json().get("recovery_code")
 
     assert s.delete(f"{BASE_URL}/api/items/{item_id}", headers=headers).status_code == 200
     assert s.get(f"{BASE_URL}/api/items/{item_id}/value", headers=headers).status_code == 404
+
+
+def test_import_items():
+    email = f"TEST_import_{uuid.uuid4().hex[:8]}@example.com"
+    s = requests.Session()
+    reg = s.post(f"{BASE_URL}/api/auth/register", json={"email": email, "password": "SecurePass123!"})
+    token = reg.json()["token"]
+    headers = {"Authorization": f"Bearer {token}"}
+    payload = {"items": [{"name": "TEST Imported", "value": "imp-secret", "category": "Secret"}]}
+    r = s.post(f"{BASE_URL}/api/items/import", headers=headers, json=payload)
+    assert r.status_code == 200
+    data = r.json()
+    assert data["count"] == 1
+    assert data["items"][0]["name"] == "TEST Imported"
 
 
 def test_protected_routes_reject_missing_auth():
