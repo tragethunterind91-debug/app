@@ -1,0 +1,41 @@
+{
+  "project_name": "CryptonVault - Ultra-Secure Password & Secrets Manager",
+  "app_type": "saas_app",
+  "theme": "dark",
+  "emotional_tone": "uncompromising security, elite precision, and calm control",
+  "color_palette": {
+    "archetype": "LUXURY & CYBER-INFRASTRUCTURE",
+    "primary": "#3B82F6",
+    "primary_hover": "#2563EB",
+    "background_dark": "#090A0F",
+    "surface_dark": "#121520",
+    "surface_card": "#171B2A",
+    "border_subtle": "rgba(255, 255, 255, 0.08)",
+    "text_main": "#F8FAFC",
+    "text_muted": "#94A3B8",
+    "accent_glow": "rgba(59, 130, 246, 0.15)",
+    "success": "#10B981",
+    "warning": "#F59E0B",
+    "danger": "#EF4444"
+  },
+  "typography": {
+    "heading_font": "Outfit, sans-serif",
+    "body_font": "Inter, sans-serif",
+    "mono_font": "JetBrains Mono, monospace"
+  },
+  "key_features": [
+    "Email/Password and Google OAuth authentication",
+    "Master Password verification and Zero-Knowledge local encryption simulation for vault items",
+    "Secure Vault Item Management (Passwords, API Keys, Secure Notes, Credit Cards, Custom Values)",
+    "Client-side search, filtering by category (Login, Secure Note, API Key, Card), and favorite items",
+    "Password Generator with entropy score, symbols, and length controls",
+    "Vault Security Health Audit (Weak, Reused, Expired passwords & breach simulation)",
+    "Secure Encrypted Item Sharing with custom expiry & password protection",
+    "Emergency Account Recovery Flow (Recovery Kit PDF download & secret backup codes)",
+    "Export Vault Data (JSON or Encrypted file download) and Single Item export/copy",
+    "Activity Log & Security Audit Trail"
+  ],
+  "image_urls": [],
+  "component_path": "/app/frontend/src/components/",
+  "instructions_to_main_agent": "Build a world-class secure vault and password manager SaaS app with both landing/auth pages and a gorgeous dashboard. Ensure all interactive buttons, inputs, tabs, search bars, copy actions, export buttons, and modals include proper data-testid attributes. Use Sonner for toast notifications. Ensure zero hardcoded placeholder URLs. Adhere strictly to Tailwind CSS styling and design system rules."
+}
