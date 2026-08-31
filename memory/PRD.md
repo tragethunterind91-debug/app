@@ -36,6 +36,9 @@ Make a website for saving passwords/values with names under very tight security.
 - Removed: POST /api/items/{id}/share and GET /api/shares/{token} endpoints
 - Responsive TopPass5 UI — mobile bottom bar with logout, search, item list
 - Full data-testid coverage on all interactive and user-facing elements
+- App logo: geometric neon-blue shield (toppass5-logo-sm.jpeg, 6KB) in /public
+- Loading screen: dark splash with spinner, TopPass5 logo, ZNQ NETWORK company logo + "by ZNQ NETWORK" text
+- Brand marks updated in sidebar and auth page header with the app logo
 
 ## Key API Endpoints
 - POST /api/auth/register
