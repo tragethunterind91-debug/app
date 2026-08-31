@@ -266,9 +266,23 @@ async def get_share(share_token: str):
 
 @router.post('/auth/recovery')
 async def recovery(data: dict):
-    user=await db.users.find_one({'email':str(data.get('email','')).lower()},{'_id':0})
-    if not user: return {'message':'If that email exists, recovery instructions are ready.'}
-    code=secrets.token_urlsafe(18); await db.recovery.insert_one({'code':code,'user_id':user['id'],'expires':(datetime.now(timezone.utc)+timedelta(hours=1)).isoformat()}); return {'message':'Recovery code created for this demo.', 'recovery_code':code}
+    email=str(data.get('email','')).lower()
+    user=await db.users.find_one({'email':email},{'_id':0})
+    if not user: return {'message':'If that email exists, a reset link has been prepared.'}
+    code=secrets.token_urlsafe(24)
+    await db.recovery.update_one({'user_id':user['id']},{'$set':{'code':code,'user_id':user['id'],'expires':(datetime.now(timezone.utc)+timedelta(hours=1)).isoformat()}},upsert=True)
+    await log_event(user['id'],'PWD_RESET_REQ',email)
+    return {'message':'Reset link created.','reset_code':code}
+
+@router.post('/auth/reset-password')
+async def reset_password(data: dict):
+    token=data.get('token',''); new_password=data.get('new_password','')
+    if len(new_password)<8: raise HTTPException(400,'Password must be at least 8 characters')
+    rec=await db.recovery.find_one({'code':token},{'_id':0})
+    if not rec or datetime.fromisoformat(rec['expires'])<datetime.now(timezone.utc): raise HTTPException(400,'Reset link has expired or is invalid. Please request a new one.')
+    await db.users.update_one({'id':rec['user_id']},{'$set':{'password':pwd.hash(new_password)}})
+    await db.recovery.delete_one({'code':token})
+    return {'message':'Password reset successfully. Please sign in with your new password.'}
 
 app=FastAPI(title='TopPass5 API'); app.include_router(router); app.add_middleware(SessionMiddleware, secret_key=JWT_SECRET, same_site='lax', https_only=True); app.add_middleware(CORSMiddleware, allow_credentials=True, allow_origins=os.environ.get('CORS_ORIGINS','*').split(','), allow_methods=['*'], allow_headers=['*'])
 @app.on_event('startup')
