@@ -30,6 +30,8 @@ class ItemIn(BaseModel):
     category: str = 'Secret'
 class ItemsImportIn(BaseModel):
     items: list[ItemIn]
+class ShareIn(BaseModel):
+    hours: int = Field(default=24, ge=1, le=168)
 
 def token_for(user):
     return jwt.encode({'sub': user['id'], 'email': user['email'], 'exp': datetime.now(timezone.utc) + timedelta(hours=12)}, JWT_SECRET, algorithm='HS256')
@@ -40,7 +42,9 @@ def auth_user(authorization):
 def public_user(u): return {'id': u['id'], 'email': u['email'], 'name': u.get('name', u['email'].split('@')[0])}
 def safe_item(doc):
     return {'id': doc['id'], 'name': doc['name'], 'category': doc.get('category','Secret'), 'created_at': doc['created_at'], 'updated_at': doc['updated_at']}
-
+async def log_event(user_id: str, action: str, detail: str = ''):
+    try: await db.audit.insert_one({'user_id':user_id,'action':action,'detail':detail,'ts':datetime.now(timezone.utc).isoformat()})
+    except Exception: pass
 @router.get('/')
 async def root(): return {'message': 'CryptonVault API'}
 
@@ -55,7 +59,7 @@ async def register(data: Credentials):
 async def login(data: Credentials):
     user = await db.users.find_one({'email': data.email.lower()}, {'_id': 0})
     if not user or not user.get('password') or not pwd.verify(data.password, user['password']): raise HTTPException(401, 'Email or password is incorrect')
-    return {'token': token_for(user), 'user': public_user(user)}
+    await log_event(user['id'],'LOGIN',data.email.lower()); return {'token': token_for(user), 'user': public_user(user)}
 
 @router.get('/auth/google')
 async def google_login(request: Request):
@@ -86,13 +90,13 @@ async def items(authorization: str | None = Header(default=None)):
 
 @router.post('/items')
 async def create_item(data: ItemIn, authorization: str | None = Header(default=None)):
-    user = auth_user(authorization); now = datetime.now(timezone.utc).isoformat(); doc = {'id':str(uuid.uuid4()), 'user_id':user['sub'], 'name':data.name, 'category':data.category, 'secret':fernet.encrypt(data.value.encode()).decode(), 'created_at':now, 'updated_at':now}; await db.items.insert_one(doc); return safe_item(doc)
+    user = auth_user(authorization); now = datetime.now(timezone.utc).isoformat(); doc = {'id':str(uuid.uuid4()), 'user_id':user['sub'], 'name':data.name, 'category':data.category, 'secret':fernet.encrypt(data.value.encode()).decode(), 'created_at':now, 'updated_at':now}; await db.items.insert_one(doc); await log_event(user['sub'],'CREATE',data.name); return safe_item(doc)
 
 @router.get('/items/{item_id}/value')
 async def reveal_item(item_id: str, authorization: str | None = Header(default=None)):
     user = auth_user(authorization); doc = await db.items.find_one({'id':item_id, 'user_id':user['sub']}, {'_id':0})
     if not doc: raise HTTPException(404, 'Item not found')
-    return {'id': item_id, 'value': fernet.decrypt(doc['secret'].encode()).decode()}
+    await log_event(user['sub'],'REVEAL',doc['name']); return {'id': item_id, 'value': fernet.decrypt(doc['secret'].encode()).decode()}
 
 @router.put('/items/{item_id}')
 async def update_item(item_id: str, data: ItemIn, authorization: str | None = Header(default=None)):
@@ -102,9 +106,9 @@ async def update_item(item_id: str, data: ItemIn, authorization: str | None = He
 
 @router.delete('/items/{item_id}')
 async def delete_item(item_id: str, authorization: str | None = Header(default=None)):
-    user=auth_user(authorization); result=await db.items.delete_one({'id':item_id,'user_id':user['sub']})
-    if not result.deleted_count: raise HTTPException(404,'Item not found')
-    return {'ok':True}
+    user=auth_user(authorization); doc=await db.items.find_one({'id':item_id,'user_id':user['sub']},{'_id':0})
+    if not doc: raise HTTPException(404,'Item not found')
+    await db.items.delete_one({'id':item_id,'user_id':user['sub']}); await log_event(user['sub'],'DELETE',doc['name']); return {'ok':True}
 
 @router.post('/items/import')
 async def import_items(data: ItemsImportIn, authorization: str | None = Header(default=None)):
@@ -113,6 +117,24 @@ async def import_items(data: ItemsImportIn, authorization: str | None = Header(d
         doc={'id':str(uuid.uuid4()),'user_id':user['sub'],'name':item.name,'category':item.category,'secret':fernet.encrypt(item.value.encode()).decode(),'created_at':now,'updated_at':now}
         await db.items.insert_one(doc); created.append(safe_item(doc))
     return {'count':len(created),'items':created}
+
+@router.get('/audit')
+async def get_audit(authorization: str | None = Header(default=None)):
+    user=auth_user(authorization); docs=await db.audit.find({'user_id':user['sub']},{'_id':0}).sort('ts',-1).to_list(50); return docs
+
+@router.post('/items/{item_id}/share')
+async def share_item(item_id: str, data: ShareIn, authorization: str | None = Header(default=None)):
+    user=auth_user(authorization); doc=await db.items.find_one({'id':item_id,'user_id':user['sub']},{'_id':0})
+    if not doc: raise HTTPException(404,'Item not found')
+    token=secrets.token_urlsafe(20); await db.shares.insert_one({'token':token,'item_id':item_id,'user_id':user['sub'],'expires':(datetime.now(timezone.utc)+timedelta(hours=data.hours)).isoformat()}); await log_event(user['sub'],'SHARE',doc['name']); return {'token':token,'hours':data.hours}
+
+@router.get('/share/{share_token}')
+async def get_share(share_token: str):
+    doc=await db.shares.find_one({'token':share_token},{'_id':0})
+    if not doc or datetime.fromisoformat(doc['expires'])<datetime.now(timezone.utc): raise HTTPException(404,'Share link expired')
+    item=await db.items.find_one({'id':doc['item_id']},{'_id':0})
+    if not item: raise HTTPException(404,'Item not found')
+    return {'name':item['name'],'value':fernet.decrypt(item['secret'].encode()).decode(),'expires':doc['expires']}
 
 @router.post('/auth/recovery')
 async def recovery(data: dict):

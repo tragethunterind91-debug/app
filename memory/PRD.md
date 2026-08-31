@@ -37,8 +37,13 @@ Make a website for saving passwords/values with names under very tight security.
 - Responsive TopPass5 UI — mobile bottom bar with logout, search, item list
 - Full data-testid coverage on all interactive and user-facing elements
 - App logo: geometric neon-blue shield (toppass5-logo-sm.jpeg, 6KB) in /public
-- Loading screen: dark splash with spinner, TopPass5 logo, ZNQ NETWORK company logo + "by ZNQ NETWORK" text
+- Loading screen: dark splash with TOPPASS5 text reveal animation, neon sweep bar, "SECURING YOUR VAULT" cursor effect, ZNQ NETWORK logo at bottom
 - Brand marks updated in sidebar and auth page header with the app logo
+- **Category filter chips**: All | Login | API key | Secret | Secure note — filters item list client-side
+- **Audit log**: Activity nav in sidebar → modal table of last 50 events (LOGIN, CREATE, REVEAL, SHARE, DELETE) tracked per-user in MongoDB
+- **Secure Share**: Share button per item generates a 24h token link → anyone with link sees decrypted value on a clean ShareView public page
+- **ShareView**: Public page (?share=TOKEN) decrypts and shows value with copy button, no auth required
+- Brand logo (ZNQ NETWORK) shown on loading screen
 
 ## Key API Endpoints
 - POST /api/auth/register
