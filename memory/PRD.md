@@ -64,11 +64,18 @@ Make a website for saving passwords/values with names under very tight security.
 - recovery: {code, user_id, expires}
 
 ## Prioritized Backlog
-- P1: Auto-suggest/auto-fill passwords based on website origin (browser extension territory)
-- P1: Re-introduce secure "Share password" option with expiry and password protection
-- P2: Audit Logs / Security Tracking (login events, reveal events)
-- P2: Recovery email delivery (currently returns code in response — demo only)
-- P2: Stronger export: option for encrypted export format
+- P1: Auto-fill / browser extension (website URL tag per item)
+- P2: Recovery email delivery (currently stub — returns code in response)
+- P2: Emergency access / trusted contact
+- P2: Passkey support (WebAuthn)
+- P2: Encrypted export format option
+
+## Key API Endpoints (updated)
+- POST /api/items/import, GET /api/audit
+- POST /api/items/{id}/share, GET /api/share/{token}
+- GET /api/items/{id}/totp
+- GET /api/security/report
+- GET/PUT /api/preferences
 
 ## Test Credentials
 - Email: test@toppass5.com / Password: Test1234!

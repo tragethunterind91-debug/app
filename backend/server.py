@@ -28,6 +28,7 @@ class ItemIn(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     value: str = Field(min_length=1, max_length=10000)
     category: str = 'Secret'
+    totp_secret: str | None = None
 class ItemsImportIn(BaseModel):
     items: list[ItemIn]
 class ShareIn(BaseModel):
@@ -41,7 +42,7 @@ def auth_user(authorization):
     except JWTError: raise HTTPException(401, 'Session expired')
 def public_user(u): return {'id': u['id'], 'email': u['email'], 'name': u.get('name', u['email'].split('@')[0])}
 def safe_item(doc):
-    return {'id': doc['id'], 'name': doc['name'], 'category': doc.get('category','Secret'), 'created_at': doc['created_at'], 'updated_at': doc['updated_at']}
+    return {'id': doc['id'], 'name': doc['name'], 'category': doc.get('category','Secret'), 'created_at': doc['created_at'], 'updated_at': doc['updated_at'], 'has_totp': bool(doc.get('totp_enc'))}
 async def log_event(user_id: str, action: str, detail: str = ''):
     try: await db.audit.insert_one({'user_id':user_id,'action':action,'detail':detail,'ts':datetime.now(timezone.utc).isoformat()})
     except Exception: pass
@@ -90,7 +91,10 @@ async def items(authorization: str | None = Header(default=None)):
 
 @router.post('/items')
 async def create_item(data: ItemIn, authorization: str | None = Header(default=None)):
-    user = auth_user(authorization); now = datetime.now(timezone.utc).isoformat(); doc = {'id':str(uuid.uuid4()), 'user_id':user['sub'], 'name':data.name, 'category':data.category, 'secret':fernet.encrypt(data.value.encode()).decode(), 'created_at':now, 'updated_at':now}; await db.items.insert_one(doc); await log_event(user['sub'],'CREATE',data.name); return safe_item(doc)
+    user = auth_user(authorization); now = datetime.now(timezone.utc).isoformat()
+    doc = {'id':str(uuid.uuid4()),'user_id':user['sub'],'name':data.name,'category':data.category,'secret':fernet.encrypt(data.value.encode()).decode(),'created_at':now,'updated_at':now}
+    if data.totp_secret: doc['totp_enc']=fernet.encrypt(data.totp_secret.encode()).decode()
+    await db.items.insert_one(doc); await log_event(user['sub'],'CREATE',data.name); return safe_item(doc)
 
 @router.get('/items/{item_id}/value')
 async def reveal_item(item_id: str, authorization: str | None = Header(default=None)):
@@ -100,9 +104,12 @@ async def reveal_item(item_id: str, authorization: str | None = Header(default=N
 
 @router.put('/items/{item_id}')
 async def update_item(item_id: str, data: ItemIn, authorization: str | None = Header(default=None)):
-    user = auth_user(authorization); now=datetime.now(timezone.utc).isoformat(); result=await db.items.update_one({'id':item_id,'user_id':user['sub']},{'$set':{'name':data.name,'category':data.category,'secret':fernet.encrypt(data.value.encode()).decode(),'updated_at':now}})
+    user = auth_user(authorization); now=datetime.now(timezone.utc).isoformat()
+    upd={'name':data.name,'category':data.category,'secret':fernet.encrypt(data.value.encode()).decode(),'updated_at':now}
+    if data.totp_secret is not None: upd['totp_enc']=fernet.encrypt(data.totp_secret.encode()).decode() if data.totp_secret else None
+    result=await db.items.update_one({'id':item_id,'user_id':user['sub']},{'$set':upd})
     if not result.matched_count: raise HTTPException(404,'Item not found')
-    doc=await db.items.find_one({'id':item_id},{'_id':0}); return safe_item(doc)
+    doc=await db.items.find_one({'id':item_id},{'_id':0}); await log_event(user['sub'],'EDIT',data.name); return safe_item(doc)
 
 @router.delete('/items/{item_id}')
 async def delete_item(item_id: str, authorization: str | None = Header(default=None)):
@@ -117,6 +124,35 @@ async def import_items(data: ItemsImportIn, authorization: str | None = Header(d
         doc={'id':str(uuid.uuid4()),'user_id':user['sub'],'name':item.name,'category':item.category,'secret':fernet.encrypt(item.value.encode()).decode(),'created_at':now,'updated_at':now}
         await db.items.insert_one(doc); created.append(safe_item(doc))
     return {'count':len(created),'items':created}
+
+@router.get('/items/{item_id}/totp')
+async def get_totp(item_id: str, authorization: str | None = Header(default=None)):
+    user=auth_user(authorization); doc=await db.items.find_one({'id':item_id,'user_id':user['sub']},{'_id':0})
+    if not doc or not doc.get('totp_enc'): raise HTTPException(404,'No TOTP configured')
+    return {'secret':fernet.decrypt(doc['totp_enc'].encode()).decode()}
+
+@router.get('/security/report')
+async def security_report(authorization: str | None = Header(default=None)):
+    user=auth_user(authorization); docs=await db.items.find({'user_id':user['sub']},{'_id':0}).to_list(1000)
+    if not docs: return {'total':0,'score':100,'weak':[],'reused':[],'old':[]}
+    vals=[fernet.decrypt(d['secret'].encode()).decode() for d in docs]
+    cutoff=(datetime.now(timezone.utc)-timedelta(days=90)).isoformat()
+    weak=[d['name'] for d,v in zip(docs,vals) if len(v)<10]
+    seen={}
+    for d,v in zip(docs,vals): seen.setdefault(v,[]).append(d['name'])
+    reused=[names for names in seen.values() if len(names)>1]
+    old=[d['name'] for d in docs if d.get('updated_at','')< cutoff]
+    score=max(0,100-len(weak)*15-len(reused)*10-len(old)*5)
+    return {'total':len(docs),'score':score,'weak':weak,'reused':reused,'old':old}
+
+@router.get('/preferences')
+async def get_prefs(authorization: str | None = Header(default=None)):
+    user=auth_user(authorization); doc=await db.preferences.find_one({'user_id':user['sub']},{'_id':0})
+    return doc or {'categories':['Login','API key','Secret','Secure note','Wi-Fi','Bank']}
+
+@router.put('/preferences')
+async def put_prefs(data: dict, authorization: str | None = Header(default=None)):
+    user=auth_user(authorization); await db.preferences.update_one({'user_id':user['sub']},{'$set':{**data,'user_id':user['sub']}},upsert=True); return {'ok':True}
 
 @router.get('/audit')
 async def get_audit(authorization: str | None = Header(default=None)):
