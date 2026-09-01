@@ -56,7 +56,7 @@ def auth_user(authorization):
     except JWTError: raise HTTPException(401, 'Session expired')
 def public_user(u): return {'id': u['id'], 'email': u['email'], 'name': u.get('name', u['email'].split('@')[0])}
 def safe_item(doc):
-    return {'id': doc['id'], 'name': doc['name'], 'category': doc.get('category','Secret'), 'url': doc.get('url',''), 'advance_mode': doc.get('advance_mode', False), 'created_at': doc['created_at'], 'updated_at': doc['updated_at'], 'has_totp': bool(doc.get('totp_enc'))}
+    return {'id': doc['id'], 'name': doc['name'], 'category': doc.get('category','Secret'), 'url': doc.get('url',''), 'advance_mode': doc.get('advance_mode', False), 'advance_locked_until': doc.get('advance_locked_until'), 'created_at': doc['created_at'], 'updated_at': doc['updated_at'], 'has_totp': bool(doc.get('totp_enc'))}
 async def log_event(user_id: str, action: str, detail: str = ''):
     try: await db.audit.insert_one({'user_id':user_id,'action':action,'detail':detail,'ts':datetime.now(timezone.utc).isoformat()})
     except Exception: pass
@@ -75,7 +75,7 @@ async def register(data: Credentials):
 async def login(data: Credentials):
     user = await db.users.find_one({'email': data.email.lower()}, {'_id': 0})
     if not user or not user.get('password') or not pwd.verify(data.password, user['password']): raise HTTPException(401, 'Email or password is incorrect')
-    await log_event(user['id'],'LOGIN',data.email.lower()); return {'token': token_for(user), 'user': public_user(user)}
+    await db.users.update_one({'id':user['id']},{'$set':{'last_seen':datetime.now(timezone.utc).isoformat()}}); await log_event(user['id'],'LOGIN',data.email.lower()); return {'token': token_for(user), 'user': public_user(user)}
 
 @router.post('/auth/phrase-login')
 async def phrase_login(data: PhraseIn):
@@ -198,7 +198,24 @@ async def advance_reveal(item_id: str, data: dict, authorization: str | None = H
     user=auth_user(authorization); doc=await db.items.find_one({'id':item_id,'user_id':user['sub']},{'_id':0})
     if not doc: raise HTTPException(404,'Item not found')
     if not doc.get('advance_mode'): raise HTTPException(400,'Not an Advance Mode item')
-    if not doc.get('advance_hash') or not pwd.verify(data.get('passphrase',''),doc['advance_hash']): raise HTTPException(401,'Wrong passphrase')
+    locked_until=doc.get('advance_locked_until')
+    if locked_until and datetime.fromisoformat(locked_until)>datetime.now(timezone.utc):
+        remaining=datetime.fromisoformat(locked_until)-datetime.now(timezone.utc)
+        days=remaining.days+1
+        raise HTTPException(423,f'Item locked after too many failed attempts. Try again in {days} day{"s" if days!=1 else ""}.')
+    if not doc.get('advance_hash') or not pwd.verify(data.get('passphrase',''),doc['advance_hash']):
+        fails=doc.get('advance_failed_attempts',0)+1
+        upd={'advance_failed_attempts':fails}
+        if fails>=4:
+            upd['advance_locked_until']=(datetime.now(timezone.utc)+timedelta(days=3)).isoformat()
+            upd['advance_failed_attempts']=0
+            await db.items.update_one({'id':item_id},{'$set':upd})
+            await log_event(user['sub'],'ADVANCE_LOCKED',doc['name'])
+            raise HTTPException(423,'Item locked for 3 days after 4 failed attempts.')
+        await db.items.update_one({'id':item_id},{'$set':upd})
+        remaining_attempts=4-fails
+        raise HTTPException(401,f'Wrong passphrase. {remaining_attempts} attempt{"s" if remaining_attempts!=1 else ""} remaining before 3-day lockout.')
+    await db.items.update_one({'id':item_id},{'$set':{'advance_failed_attempts':0}})
     await log_event(user['sub'],'ADVANCE_REVEAL',doc['name']); return {'id':item_id,'value':fernet.decrypt(doc['secret'].encode()).decode()}
 
 @router.get('/shares')
@@ -238,7 +255,9 @@ async def admin_stats(authorization: str | None = Header(default=None)):
     week_logins=await db.audit.count_documents({'action':'LOGIN','ts':{'$gt':week_ago}})
     pending=await db.recovery_requests.count_documents({'status':'pending'})
     requests=await db.recovery_requests.find({'status':'pending'},{'_id':0}).sort('created_at',-1).to_list(50)
-    return {'total_users':total_users,'total_items':total_items,'adv_items':adv_items,'today_logins':today_logins,'week_logins':week_logins,'pending_recovery':pending,'recovery_requests':requests}
+    online_today=await db.users.count_documents({'last_seen':{'$gt':today}})
+    online_now=await db.users.count_documents({'last_seen':{'$gt':(datetime.now(timezone.utc)-timedelta(hours=1)).isoformat()}})
+    return {'total_users':total_users,'total_items':total_items,'adv_items':adv_items,'today_logins':today_logins,'week_logins':week_logins,'online_today':online_today,'online_now':online_now,'pending_recovery':pending,'recovery_requests':requests}
 
 @router.patch('/admin/recovery/{req_id}')
 async def update_recovery(req_id: str, data: dict, authorization: str | None = Header(default=None)):

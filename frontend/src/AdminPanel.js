@@ -72,6 +72,16 @@ export default function AdminPanel({user, onLogout}) {
               <span className="admin-stat-n">{stats.week_logins}</span>
               <span>Logins This Week</span>
             </div>
+            <div className="admin-stat-card" data-testid="stat-online-today">
+              <Users size={20}/>
+              <span className="admin-stat-n" style={{color:'var(--green)'}}>{stats.online_today ?? '—'}</span>
+              <span>Members Online Today</span>
+            </div>
+            <div className="admin-stat-card" data-testid="stat-online-now">
+              <Users size={20}/>
+              <span className="admin-stat-n" style={{color:'#34d399'}}>{stats.online_now ?? '—'}</span>
+              <span>Active Last Hour</span>
+            </div>
             <div className="admin-stat-card" data-testid="stat-pending-recovery">
               <AlertCircle size={20}/>
               <span className="admin-stat-n" style={{color: stats.pending_recovery > 0 ? 'var(--red)' : 'var(--green)'}}>{stats.pending_recovery}</span>
