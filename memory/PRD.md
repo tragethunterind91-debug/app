@@ -20,7 +20,7 @@ Build a website for saving passwords/values with tight security (TopPass5). User
 - Crypto-wallet style recovery phrase
 - Magic Link password reset
 - Admin Panel (owner stats: members online, total passwords)
-- Google AdSense monetization on public pages
+- Google ad monetization: AdSense removed; Google Ad Manager pending user-provided tag/code
 - TopPass5 branding with custom CSS loading screen
 
 ## Dropped Features
@@ -45,7 +45,8 @@ Build a website for saving passwords/values with tight security (TopPass5). User
 - Vault PIN Lock (code injected, testing pending)
 - Admin Panel (code injected, testing pending)
 - 3-day lockout on advance mode (code injected, testing pending)
-- Google AdSense script added (2026-02-25)
+- Google AdSense script added earlier, then removed at user request (2026-09-01)
+- Google Ad Manager not added yet; awaiting exact tag/code from user
 
 ## Pending Validation
 - Vault PIN Lock functionality
@@ -56,6 +57,6 @@ Build a website for saving passwords/values with tight security (TopPass5). User
 ## Backlog (P0-P2)
 - P0: Full end-to-end testing of injected features (PIN, Admin, Lockout)
 - P0: Sharing links feature (clarification needed from user)
-- P1: Ad placement control (show only on public pages, not inside vault)
+- P1: Add Google Ad Manager tags after user provides exact code/network details
 - P2: UI/UX refinement on Advance Mode toggle
 - P2: Migration/self-hosting prep if user requests
