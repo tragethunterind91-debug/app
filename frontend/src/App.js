@@ -14,19 +14,16 @@ const hashPin=async(p)=>{const buf=await crypto.subtle.digest('SHA-256',new Text
 
 function Auth({onLogin}){
   const [mode,setMode]=useState('login');const [email,setEmail]=useState('');const [password,setPassword]=useState('');const [busy,setBusy]=useState(false);
-  const [phraseModal,setPhraseModal]=useState(null);const [phraseMode,setPhraseMode]=useState(false);const [phraseWords,setPhraseWords]=useState('');const [phraseNewPwd,setPhraseNewPwd]=useState('');const [phraseAction,setPhraseAction]=useState('login');
-  const [forgotModal,setForgotModal]=useState(null);
   // Multi-stage login
-  const [loginStage,setLoginStage]=useState(null); // null | 'birthday' | 'layer3'
+  const [loginStage,setLoginStage]=useState(null);
   const [stageToken,setStageToken]=useState(null);
   const [birthdayInput,setBirthdayInput]=useState('');
   const [quizIndices,setQuizIndices]=useState([]);
   const [quizAnswers,setQuizAnswers]=useState({});
-  const [stageUser,setStageUser]=useState(null);
   // Registration extras
   const [regBirthday,setRegBirthday]=useState('');
   const [regBirthdayConfirm,setRegBirthdayConfirm]=useState('');
-  const [l3Modal,setL3Modal]=useState(null); // {passwords, phrase, user}
+  const [l3Modal,setL3Modal]=useState(null); // {passwords, user}
   // Login attempts display
   const [loginStatus,setLoginStatus]=useState(null);
   const checkLoginStatus=async(em)=>{if(!em||mode!=='login')return;try{const r=await client.get(`/auth/login-status?email=${encodeURIComponent(em)}`);setLoginStatus(r.data)}catch{setLoginStatus(null)}};
@@ -34,23 +31,18 @@ function Auth({onLogin}){
   const submit=async(e)=>{
     e.preventDefault();setBusy(true);
     try{
-      if(mode==='forgot'){
-        const r=await client.post('/auth/recovery',{email});
-        setForgotModal({link:`${window.location.origin}/?reset=${r.data.reset_code}`});
-      }else if(mode==='register'){
+      if(mode==='register'){
         if(!regBirthday){toast.error('Birthday is required');setBusy(false);return}
         if(regBirthday!==regBirthdayConfirm){toast.error('Birthdays do not match');setBusy(false);return}
         const r=await client.post('/auth/register',{email,password,birthday:regBirthday});
         localStorage.setItem('vault_token',r.data.token);
-        // Show L3 passwords + recovery phrase
-        setL3Modal({passwords:r.data.layer3_passwords,phrase:r.data.phrase,user:r.data.user});
+        setL3Modal({passwords:r.data.layer3_passwords,user:r.data.user});
       }else{
         const r=await client.post('/auth/login',{email,password});
         if(r.data.stage==='birthday'){
-          setStageToken(r.data.token);setStageUser(r.data.user);setLoginStage('birthday');setBirthdayInput('');
+          setStageToken(r.data.token);setLoginStage('birthday');setBirthdayInput('');
         }else{
-          localStorage.setItem('vault_token',r.data.token);
-          if(r.data.phrase)setPhraseModal({phrase:r.data.phrase,user:r.data.user});else onLogin(r.data.user);
+          localStorage.setItem('vault_token',r.data.token);onLogin(r.data.user);
         }
       }
     }catch(e){toast.error(e.response?.data?.detail||'Could not sign in')}finally{setBusy(false)}
@@ -75,8 +67,6 @@ function Auth({onLogin}){
       localStorage.setItem('vault_token',r.data.token);onLogin(r.data.user);setLoginStage(null);
     }catch(e){toast.error(e.response?.data?.detail||'Layer 3 verification failed')}finally{setBusy(false)}
   };
-
-  const submitPhrase=async(e)=>{e.preventDefault();setBusy(true);try{if(phraseAction==='login'){const r=await client.post('/auth/phrase-login',{email,phrase:phraseWords});localStorage.setItem('vault_token',r.data.token);onLogin(r.data.user)}else{await client.post('/auth/phrase-reset',{email,phrase:phraseWords,new_password:phraseNewPwd});toast.success('Password reset! Please sign in.');setPhraseMode(false);setMode('login')}}catch(e){toast.error(e.response?.data?.detail||'Recovery failed')}finally{setBusy(false)}};
 
   // Birthday verification stage
   if(loginStage==='birthday')return(
@@ -110,70 +100,28 @@ function Auth({onLogin}){
       <section className="auth-panel">
         <div className="auth-card">
           <div className="mobile-brand brand"><img src="/toppass5-logo-sm.jpeg" alt="TopPass5" className="brand-logo-mark"/></div>
-          {!phraseMode?(
-            mode==='forgot'?(
-              <>
-                <p className="eyebrow">PASSWORD RESET</p>
-                <h2>Forgot password?</h2>
-                <p className="muted">Enter your email to get a password reset link.</p>
-                <form onSubmit={submit} data-testid="forgot-form">
-                  <label>Email<input data-testid="forgot-email-input" type="email" value={email} onChange={e=>setEmail(e.target.value)} required placeholder="you@example.com"/></label>
-                  <button className="primary wide" data-testid="forgot-submit" disabled={busy}>{busy?'Generating…':'Get Reset Link'} <ArrowUpRight size={17}/></button>
-                </form>
-                <button className="link-btn" data-testid="back-to-login" onClick={()=>setMode('login')}>← Back to login</button>
-              </>
-            ):(
-              <>
-                <p className="eyebrow">SECURE ACCESS</p>
-                <h2>{mode==='login'?'Welcome back':'Create your vault'}</h2>
-                <p className="muted">{mode==='login'?'Your private command center is waiting.':'Start protecting what matters in under a minute.'}</p>
-                <form onSubmit={submit} data-testid="auth-form">
-                  <label>Email<input data-testid="auth-email-input" type="email" value={email} onChange={e=>setEmail(e.target.value)} onBlur={e=>checkLoginStatus(e.target.value)} required placeholder="you@example.com"/></label>
-                  <label>Password<input data-testid="auth-password-input" type="password" value={password} onChange={e=>setPassword(e.target.value)} required minLength="8" placeholder="At least 8 characters"/></label>
-                  {mode==='login'&&loginStatus&&loginStatus.hardcore&&<div className="login-attempts-warn" data-testid="login-attempts-warning"><AlertTriangle size={14}/><div><b>Hardcore Mode Active</b><p>Today: {loginStatus.daily_used}/{loginStatus.daily_limit} tries used &bull; Total fails: {loginStatus.total_fails}/{loginStatus.total_limit} &bull; Consecutive days: {loginStatus.consecutive_days}/{loginStatus.days_limit}</p></div></div>}
-                  {mode==='register'&&<><label>Birthday<input data-testid="reg-birthday-input" type="date" value={regBirthday} onChange={e=>setRegBirthday(e.target.value)} required/></label><label>Confirm Birthday<input data-testid="reg-birthday-confirm" type="date" value={regBirthdayConfirm} onChange={e=>setRegBirthdayConfirm(e.target.value)} required/></label></>}
-                  <button className="primary wide" data-testid="auth-submit-button" disabled={busy}>{busy?'Securing…':mode==='login'?'Unlock vault':'Create vault'} <ArrowUpRight size={17}/></button>
-                </form>
-                <div className="or"><span>or continue with</span></div>
-                <a className="google-btn" data-testid="google-login-button" href={`${API}/auth/google?frontend_origin=${encodeURIComponent(window.location.origin)}`}><span className="google-g">G</span> Continue with Google</a>
-                <button className="link-btn" data-testid="auth-mode-toggle" onClick={()=>setMode(mode==='login'?'register':'login')}>{mode==='login'?"I don't have an account":"I already have an account"}</button>
-                <div className="auth-links">
-                  {mode==='login'&&<button className="recovery-link" data-testid="forgot-password-button" onClick={()=>{setEmail('');setMode('forgot')}}>Forgot password?</button>}
-                  <button className="link-btn phrase-link" data-testid="phrase-login-button" onClick={()=>setPhraseMode(true)}>Use Recovery Phrase</button>
-                </div>
-              </>
-            )
-          ):(
-            <>
-              <p className="eyebrow">LAYER 3 RECOVERY</p>
-              <h2>Recovery Phrase</h2>
-              <p className="muted">Enter your 12-word backup phrase to access your vault or reset your password.</p>
-              <div className="phrase-action-tabs">
-                <button type="button" className={phraseAction==='login'?'active':''} data-testid="phrase-tab-login" onClick={()=>setPhraseAction('login')}>Sign In</button>
-                <button type="button" className={phraseAction==='reset'?'active':''} data-testid="phrase-tab-reset" onClick={()=>setPhraseAction('reset')}>Reset Password</button>
-              </div>
-              <form onSubmit={submitPhrase} data-testid="phrase-form">
-                <label>Email<input data-testid="phrase-email-input" type="email" value={email} onChange={e=>setEmail(e.target.value)} required placeholder="you@example.com"/></label>
-                <label>Recovery Phrase (12 words)<textarea data-testid="phrase-words-input" value={phraseWords} onChange={e=>setPhraseWords(e.target.value)} required placeholder="word1 word2 word3 ... word12" rows="3" style={{resize:'none',fontFamily:'monospace'}}/></label>
-                {phraseAction==='reset'&&<label>New Password<input data-testid="phrase-newpwd-input" type="password" value={phraseNewPwd} onChange={e=>setPhraseNewPwd(e.target.value)} required minLength="8" placeholder="New password (8+ chars)"/></label>}
-                <button className="primary wide" data-testid="phrase-submit-button" disabled={busy}>{busy?'Verifying…':phraseAction==='login'?'Unlock with Phrase':'Reset Password'} <ArrowUpRight size={17}/></button>
-              </form>
-              <button className="link-btn" data-testid="phrase-back-button" onClick={()=>setPhraseMode(false)}>← Back to login</button>
-            </>
-          )}
+          <p className="eyebrow">SECURE ACCESS</p>
+          <h2>{mode==='login'?'Welcome back':'Create your vault'}</h2>
+          <p className="muted">{mode==='login'?'Your private command center is waiting.':'Start protecting what matters in under a minute.'}</p>
+          <form onSubmit={submit} data-testid="auth-form">
+            <label>Email<input data-testid="auth-email-input" type="email" value={email} onChange={e=>setEmail(e.target.value)} onBlur={e=>checkLoginStatus(e.target.value)} required placeholder="you@example.com"/></label>
+            <label>Password<input data-testid="auth-password-input" type="password" value={password} onChange={e=>setPassword(e.target.value)} required minLength="8" placeholder="At least 8 characters"/></label>
+            {mode==='login'&&loginStatus&&loginStatus.hardcore&&<div className="login-attempts-warn" data-testid="login-attempts-warning"><AlertTriangle size={14}/><div><b>Hardcore Mode Active</b><p>Today: {loginStatus.daily_used}/{loginStatus.daily_limit} tries used &bull; Total fails: {loginStatus.total_fails}/{loginStatus.total_limit} &bull; Consecutive days: {loginStatus.consecutive_days}/{loginStatus.days_limit}</p></div></div>}
+            {mode==='register'&&<><label>Birthday <span className="birthday-warn">Please enter correctly — used for login verification</span><input data-testid="reg-birthday-input" type="date" value={regBirthday} onChange={e=>setRegBirthday(e.target.value)} required/></label><label>Confirm Birthday<input data-testid="reg-birthday-confirm" type="date" value={regBirthdayConfirm} onChange={e=>setRegBirthdayConfirm(e.target.value)} required/></label></>}
+            {mode==='login'&&<p className="birthday-login-hint" data-testid="birthday-hint">You will need your birthday to complete sign-in.</p>}
+            <button className="primary wide" data-testid="auth-submit-button" disabled={busy}>{busy?'Securing…':mode==='login'?'Unlock vault':'Create vault'} <ArrowUpRight size={17}/></button>
+          </form>
+          <button className="link-btn" data-testid="auth-mode-toggle" onClick={()=>setMode(mode==='login'?'register':'login')}>{mode==='login'?"I don't have an account":"I already have an account"}</button>
         </div>
       </section>
-      {/* Registration: L3 passwords + recovery phrase reveal */}
-      {l3Modal&&<div className="modal-backdrop"><div className="modal phrase-reveal-modal l3-reveal-modal" data-testid="l3-reveal-modal"><p className="eyebrow">ACCOUNT CREATED — SAVE THESE NOW</p><h2>Your Security Keys</h2>
-        <p className="muted phrase-warn">These are shown ONCE. Write them down or store offline. You need these to log in.</p>
+      {/* Registration: L3 passwords reveal (no recovery phrase) */}
+      {l3Modal&&<div className="modal-backdrop"><div className="modal phrase-reveal-modal l3-reveal-modal" data-testid="l3-reveal-modal"><p className="eyebrow">ACCOUNT CREATED — SAVE THESE NOW</p><h2>Your Crypto Type Passwords</h2>
+        <p className="muted phrase-warn">These are shown ONCE. Write them down or store offline. You need these to log in when Layer 3 is enabled.</p>
         <div className="l3-section"><h3 style={{fontSize:'13px',color:'#6f9bff',marginBottom:'8px'}}>20 Crypto Type Passwords (Layer 3)</h3><div className="l3-grid" data-testid="l3-passwords-grid">{l3Modal.passwords.map((p,i)=><div key={i} className="l3-pass-card" data-testid={`l3-pass-${i}`}><span className="l3-num">{i+1}</span><span className="l3-val">{p}</span></div>)}</div>
         <button className="secondary" style={{marginTop:'10px',width:'100%'}} data-testid="copy-l3-passwords" onClick={()=>{copyText(l3Modal.passwords.map((p,i)=>`${i+1}: ${p}`).join('\n'));toast.success('All 20 passwords copied!')}}><Copy size={14}/> Copy All Passwords</button></div>
-        <div className="l3-section" style={{marginTop:'16px'}}><h3 style={{fontSize:'13px',color:'#27d3a2',marginBottom:'8px'}}>12-Word Recovery Phrase</h3><div className="phrase-grid" data-testid="phrase-grid">{l3Modal.phrase.split(' ').map((w,i)=><div key={i} className="phrase-word" data-testid={`phrase-word-${i}`}><span className="phrase-num">{i+1}</span><span>{w}</span></div>)}</div>
-        <button className="secondary" style={{marginTop:'10px',width:'100%'}} data-testid="copy-phrase-button" onClick={()=>{copyText(l3Modal.phrase);toast.success('Recovery phrase copied!')}}><Copy size={14}/> Copy Phrase</button></div>
+        <p className="muted" style={{marginTop:'12px',fontSize:'11px',color:'#5a6a80'}}>You can enable Layer 3 protection from Settings after entering your vault. These passwords will be required during login.</p>
         <button className="primary wide" style={{marginTop:'16px'}} data-testid="l3-confirm-button" onClick={()=>{onLogin(l3Modal.user);setL3Modal(null)}}>I've saved everything — Enter vault</button>
       </div></div>}
-      {phraseModal&&<div className="modal-backdrop"><div className="modal phrase-reveal-modal" data-testid="phrase-reveal-modal"><p className="eyebrow">LAYER 3 BACKUP</p><h2>Your Recovery Phrase</h2><p className="muted phrase-warn">Write these 12 words in order. Store them safely offline. This is the ONLY way to recover your vault if you lose your password.</p><div className="phrase-grid" data-testid="phrase-grid">{phraseModal.phrase.split(' ').map((w,i)=><div key={i} className="phrase-word" data-testid={`phrase-word-${i}`}><span className="phrase-num">{i+1}</span><span>{w}</span></div>)}</div><div className="phrase-actions"><button className="secondary" data-testid="copy-phrase-button" onClick={()=>{copyText(phraseModal.phrase);toast.success('Recovery phrase copied!')}}><Copy size={14}/> Copy All Words</button><button className="primary" data-testid="phrase-confirm-button" onClick={()=>{onLogin(phraseModal.user);setPhraseModal(null)}}>I've saved it — Enter vault</button></div></div></div>}
-      {forgotModal&&<div className="modal-backdrop"><div className="modal forgot-modal" data-testid="forgot-modal"><button type="button" className="modal-close icon-btn" onClick={()=>{setForgotModal(null);setMode('login')}}><X/></button><p className="eyebrow">PASSWORD RESET</p><h2>Reset Link Ready</h2><p className="muted">Copy this link and open it in your browser. It expires in 1 hour.</p><div className="share-link-box" data-testid="reset-link-display">{forgotModal.link}</div><button className="primary wide" data-testid="copy-reset-link" onClick={()=>{copyText(forgotModal.link);toast.success('Reset link copied to clipboard!')}}><Copy size={15}/> Copy Reset Link</button><p className="reset-note">Configure an email provider to send this automatically.</p></div></div>}
       <Toaster theme="dark"/>
     </main>
   );
@@ -181,11 +129,12 @@ function Auth({onLogin}){
 
 function Vault({user,onLogout}){
   const inactivityRef=useRef(null);
-  const [items,setItems]=useState([]); const [query,setQuery]=useState(''); const [showForm,setShowForm]=useState(false); const [editing,setEditing]=useState(null); const [visible,setVisible]=useState({}); const [values,setValues]=useState({}); const [form,setForm]=useState({name:'',value:'',category:'Secret',totp_secret:'',url:'',advance_mode:false,advance_passphrase:''}); const [showGen,setShowGen]=useState(false); const [genOpts,setGenOpts]=useState({length:16,upper:true,lower:true,nums:true,syms:false}); const [genPwd,setGenPwd]=useState(''); const [cat,setCat]=useState('All'); const [shareModal,setShareModal]=useState(null); const [showAudit,setShowAudit]=useState(false); const [auditLogs,setAuditLogs]=useState([]); const [secReport,setSecReport]=useState(null); const [showSec,setShowSec]=useState(false); const [categories,setCategories]=useState(['Login','API key','Secret','Secure note','Wi-Fi','Bank']); const [breachBadge,setBreachBadge]=useState(0); const [breachChecking,setBreachChecking]=useState(false); const [breachScanned,setBreachScanned]=useState(false); const [showSharePicker,setShowSharePicker]=useState(null); const [showAdvancePrompt,setShowAdvancePrompt]=useState(null); const [advanceInput,setAdvanceInput]=useState(''); const [showShares,setShowShares]=useState(false); const [activeShares,setActiveShares]=useState([]); const [phraseGenModal,setPhraseGenModal]=useState(null); const [showSettings,setShowSettings]=useState(false); const [showHelp,setShowHelp]=useState(false); const [settings,setSettings]=useState({autofill:true});
+  const [items,setItems]=useState([]); const [query,setQuery]=useState(''); const [showForm,setShowForm]=useState(false); const [editing,setEditing]=useState(null); const [visible,setVisible]=useState({}); const [values,setValues]=useState({}); const [form,setForm]=useState({name:'',value:'',category:'Secret',totp_secret:'',url:'',advance_mode:false,advance_passphrase:''}); const [showGen,setShowGen]=useState(false); const [genOpts,setGenOpts]=useState({length:16,upper:true,lower:true,nums:true,syms:false}); const [genPwd,setGenPwd]=useState(''); const [cat,setCat]=useState('All'); const [shareModal,setShareModal]=useState(null); const [showAudit,setShowAudit]=useState(false); const [auditLogs,setAuditLogs]=useState([]); const [secReport,setSecReport]=useState(null); const [showSec,setShowSec]=useState(false); const [categories,setCategories]=useState(['Login','API key','Secret','Secure note','Wi-Fi','Bank']); const [breachBadge,setBreachBadge]=useState(0); const [breachChecking,setBreachChecking]=useState(false); const [breachScanned,setBreachScanned]=useState(false); const [showSharePicker,setShowSharePicker]=useState(null); const [showAdvancePrompt,setShowAdvancePrompt]=useState(null); const [advanceInput,setAdvanceInput]=useState(''); const [showShares,setShowShares]=useState(false); const [activeShares,setActiveShares]=useState([]); const [showSettings,setShowSettings]=useState(false); const [showHelp,setShowHelp]=useState(false); const [settings,setSettings]=useState({autofill:true});
   const [showPinLock,setShowPinLock]=useState(false); const [pinInput,setPinInput]=useState(''); const [pinError,setPinError]=useState(''); const [pinEnabled,setPinEnabled]=useState(!!localStorage.getItem('vault_pin_hash')); const [setupPinMode,setSetupPinMode]=useState(false); const [setupPinValue,setSetupPinValue]=useState(''); const [setupPinConfirm,setSetupPinConfirm]=useState(''); const [setupPinErr,setSetupPinErr]=useState('');
   const [showItemProps,setShowItemProps]=useState(null);
   // Layer 3, Hardcore, Disclaimer states
-  const [showDisclaimer,setShowDisclaimer]=useState(!user.disclaimer_accepted);
+  const [showDisclaimer,setShowDisclaimer]=useState(false);
+  const [disclaimerEnabled,setDisclaimerEnabled]=useState(user.disclaimer_enabled||false);
   const [showTerms,setShowTerms]=useState(false);
   const [showPrivacy,setShowPrivacy]=useState(false);
   const [showSecuritySettings,setShowSecuritySettings]=useState(false);
@@ -263,8 +212,6 @@ function Vault({user,onLogout}){
 
   const exportItem=(item)=>{const data=JSON.stringify({name:item.name,value:values[item.id]||'[reveal before export]',category:item.category},null,2);const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([data],{type:'application/json'}));a.download=`${item.name.replace(/\s+/g,'-')}.json`;a.click()};
   const exportAll=async()=>{if(!window.confirm('This will download ALL your secrets in plain text. Continue?'))return;const full=await Promise.all(items.map(async i=>{const r=await client.get(`/items/${i.id}/value`,authHeader());return {...i,value:r.data.value}}));const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(full,null,2)],{type:'application/json'}));a.download='toppass5-backup.json';a.click();toast.success('Vault backup downloaded')};
-  const genPhrase=async()=>{if(!window.confirm('Generate a new 12-word recovery phrase? This replaces any existing phrase.'))return;try{const r=await client.post('/auth/set-phrase',{},authHeader());setPhraseGenModal(r.data.phrase)}catch{toast.error('Could not generate phrase')}};
-
   // --- Layer 3 & Hardcore helpers ---
   const loadL3Passwords=async()=>{try{const r=await client.get('/auth/layer3-passwords',authHeader());setL3Passwords(r.data.passwords);setL3Enabled(r.data.enabled);return r.data}catch{toast.error('Could not load Layer 3 data');return null}};
   const toggleL3=async(enable)=>{
@@ -294,7 +241,11 @@ function Vault({user,onLogout}){
   const saveHardcore=async(newData)=>{
     try{await client.put('/auth/hardcore-settings',newData,authHeader());setHardcoreData(d=>({...d,enabled:newData.enabled,settings:{max_login_fail_days:newData.max_login_fail_days,max_login_fails:newData.max_login_fails,max_daily_tries:newData.max_daily_tries,max_layer3_fails:newData.max_layer3_fails}}));toast.success(newData.enabled?'Hardcore Mode enabled — be careful!':'Hardcore Mode disabled')}catch(e){toast.error(e.response?.data?.detail||'Failed')}
   };
-  const acceptDisclaimer=async()=>{try{await client.post('/auth/accept-disclaimer',{},authHeader());setShowDisclaimer(false)}catch{setShowDisclaimer(false)}};
+  const toggleDisclaimer=async(enable)=>{
+    if(enable&&!disclaimerEnabled){setShowDisclaimer(true)}
+    try{await client.post('/auth/toggle-disclaimer',{enabled:enable},authHeader());setDisclaimerEnabled(enable);if(!enable)setShowDisclaimer(false)}catch{toast.error('Failed to update')}
+  };
+  const acceptDisclaimer=()=>{setShowDisclaimer(false)};
   const saveBirthday=async()=>{
     if(!bdaySetup||!bdaySetupConfirm){toast.error('Both fields required');return}
     if(bdaySetup!==bdaySetupConfirm){toast.error('Birthdays do not match');return}
@@ -328,7 +279,6 @@ function Vault({user,onLogout}){
         {breachChecking?<span className="breach-checking"/>:breachScanned?(<span className={`breach-badge${breachBadge>0?'':' breach-ok'}`} data-testid="breach-badge">{breachBadge>0?breachBadge:'✓'}</span>):null}
       </div>
       <div className="side-label lower">SECURITY</div>
-      <div className="nav-item" data-testid="phrase-nav" onClick={genPhrase}><ShieldCheck size={17}/>Backup Phrase</div>
       <div className="nav-item" data-testid="settings-nav" onClick={()=>setShowSettings(true)}><Settings size={17}/>Settings</div>
       <div className="nav-item" data-testid="help-nav" onClick={()=>setShowHelp(true)}><HelpCircle size={17}/>Help &amp; Guide</div>
       {user.is_admin&&<a href="?admin=1" className="nav-item nav-admin" data-testid="admin-nav"><Lock size={17}/>Owner Panel</a>}
@@ -397,9 +347,6 @@ function Vault({user,onLogout}){
     {/* Audit Log */}
     {showAudit&&<div className="modal-backdrop"><div className="modal audit-modal" data-testid="audit-modal"><button type="button" className="modal-close icon-btn" data-testid="close-audit-modal" onClick={()=>setShowAudit(false)}><X/></button><p className="eyebrow">SECURITY</p><h2>Activity Log</h2>{auditLogs.length===0?<p className="muted">No activity yet.</p>:<div className="audit-list">{auditLogs.map((e,i)=><div key={i} className="audit-row" data-testid={`audit-row-${i}`}><span className={`audit-badge ab-${e.action.toLowerCase()}`}>{e.action}</span><span className="audit-detail">{e.detail||'—'}</span><span className="audit-time">{new Date(e.ts).toLocaleString()}</span></div>)}</div>}</div></div>}
 
-    {/* Backup Phrase Generate */}
-    {phraseGenModal&&<div className="modal-backdrop"><div className="modal phrase-reveal-modal" data-testid="phrase-gen-modal"><button type="button" className="modal-close icon-btn" onClick={()=>setPhraseGenModal(null)}><X/></button><p className="eyebrow">RECOVERY BACKUP</p><h2>Your Recovery Phrase</h2><p className="muted phrase-warn">Save these 12 words safely. Use them to log in or reset your password. Shown ONCE.</p><div className="phrase-grid" data-testid="phrase-gen-grid">{phraseGenModal.split(' ').map((w,i)=><div key={i} className="phrase-word"><span className="phrase-num">{i+1}</span><span>{w}</span></div>)}</div><div className="phrase-actions"><button className="secondary" data-testid="copy-gen-phrase-button" onClick={()=>{copyText(phraseGenModal);toast.success('Phrase copied!')}}><Copy size={14}/> Copy All Words</button><button className="primary" onClick={()=>setPhraseGenModal(null)}>Done — I've saved it</button></div></div></div>}
-
     {/* Settings Modal — Expanded */}
     {showSettings&&<div className="modal-backdrop"><div className="modal settings-modal" data-testid="settings-modal" style={{maxHeight:'88vh',overflowY:'auto'}}><button type="button" className="modal-close icon-btn" data-testid="close-settings" onClick={()=>setShowSettings(false)}><X/></button><p className="eyebrow">PREFERENCES</p><h2>Settings</h2><div className="settings-list">
       <div className="settings-row" data-testid="autofill-setting"><div className="settings-info"><b>Browser Autofill</b><p>Allow browser to autofill and suggest saving vault values in forms.</p></div><label className="toggle-switch"><input type="checkbox" checked={settings.autofill} onChange={e=>saveSettingsPref({...settings,autofill:e.target.checked})}/><span className="toggle-slider"/></label></div>
@@ -412,7 +359,9 @@ function Vault({user,onLogout}){
       <div className="settings-row" data-testid="l3-toggle-setting"><div className="settings-info"><b>Layer 3 Lock</b><p>Require crypto type pass verification on every login. You must pass a quiz to enable.</p></div><label className="toggle-switch"><input type="checkbox" checked={l3Enabled} onChange={e=>toggleL3(e.target.checked)}/><span className="toggle-slider"/></label></div>
       <div className="settings-row clickable" data-testid="l3-view-btn" onClick={async()=>{await loadL3Passwords();setShowL3View(true);setShowSettings(false)}}><div className="settings-info"><b>View My 20 Passwords</b><p>See your current Layer 3 crypto type passwords.</p></div><ArrowUpRight size={16} style={{color:'var(--muted)',flexShrink:0}}/></div>
       <div className="settings-row clickable" data-testid="l3-export-btn" onClick={exportL3Passwords}><div className="settings-info"><b>Export Passwords</b><p>Download your 20 crypto type passwords as a text file.</p></div><Download size={16} style={{color:'var(--muted)',flexShrink:0}}/></div>
-      <div className="settings-row clickable" data-testid="l3-regen-btn" onClick={()=>{setShowL3Regen(true);setShowSettings(false)}}><div className="settings-info"><b>Regenerate Passwords</b><p>Get new random passwords. Max 5 changes per week. Requires password.</p></div><RefreshCw size={16} style={{color:'var(--muted)',flexShrink:0}}/></div>
+      <div className="settings-row clickable" data-testid="l3-regen-btn" onClick={()=>{setShowL3Regen(true);setShowSettings(false)}}><div className="settings-info"><b>Regenerate Passwords</b><p>Get new random passwords. Max 3 changes per month. Requires password.</p></div><RefreshCw size={16} style={{color:'var(--muted)',flexShrink:0}}/></div>
+      <div className="settings-divider"><span>SECURITY</span></div>
+      <div className="settings-row" data-testid="disclaimer-toggle-setting"><div className="settings-info"><b>Disclaimer Notice</b><p>Show disclaimer about password leak responsibility on login.</p></div><label className="toggle-switch"><input type="checkbox" checked={disclaimerEnabled} onChange={e=>toggleDisclaimer(e.target.checked)}/><span className="toggle-slider"/></label></div>
       <div className="settings-divider"><span>HARDCORE MODE</span></div>
       <div className="settings-row clickable" data-testid="hardcore-btn" onClick={async()=>{await loadHardcore();setShowSecuritySettings(true);setShowSettings(false)}}><div className="settings-info"><b><Skull size={14} style={{display:'inline',verticalAlign:'middle',marginRight:'6px'}}/>Hardcore Mode</b><p>Auto-delete account on too many failures. Customize limits.</p></div><ArrowUpRight size={16} style={{color:'var(--red)',flexShrink:0}}/></div>
       <div className="settings-divider"><span>LEGAL & ACCOUNT</span></div>
@@ -434,7 +383,7 @@ function Vault({user,onLogout}){
     </div></div>}
 
     {/* L3 Regenerate */}
-    {showL3Regen&&<div className="modal-backdrop"><div className="modal" data-testid="l3-regen-modal"><button type="button" className="modal-close icon-btn" onClick={()=>{setShowL3Regen(false);setL3RegenPwd('')}}><X/></button><p className="eyebrow">REGENERATE PASSWORDS</p><h2>New Crypto Type Passwords</h2><p className="muted">This generates 20 new random passwords. Max 5 changes per week. Layer 3 must be disabled first.</p>
+    {showL3Regen&&<div className="modal-backdrop"><div className="modal" data-testid="l3-regen-modal"><button type="button" className="modal-close icon-btn" onClick={()=>{setShowL3Regen(false);setL3RegenPwd('')}}><X/></button><p className="eyebrow">REGENERATE PASSWORDS</p><h2>New Crypto Type Passwords</h2><p className="muted">This generates 20 new random passwords. Max 3 changes per month. Layer 3 must be disabled first.</p>
       <label>Confirm Your Password<input data-testid="l3-regen-pwd" type="password" value={l3RegenPwd} onChange={e=>setL3RegenPwd(e.target.value)} placeholder="Enter your account password"/></label>
       <button className="primary wide" data-testid="l3-regen-submit" onClick={regenL3} disabled={!l3RegenPwd}><RefreshCw size={15}/> Generate New Passwords</button>
     </div></div>}
@@ -544,26 +493,59 @@ function ShareView({token}){
   return <div className="share-screen"><div className="brand"><img src="/toppass5-logo-sm.jpeg" alt="" className="brand-logo-mark"/></div><div className="share-card" data-testid="share-view-card"><p className="eyebrow">SHARED WITH YOU</p><h2>{data.name}</h2><div className="share-value-box" data-testid="share-value">{data.value}</div><button className="primary wide" onClick={copy}><Copy size={15}/> Copy value</button><p className="share-exp">Expires {new Date(data.expires).toLocaleString()}</p></div><Toaster theme="dark"/></div>
 }
 
+function LandingPage({onGetStarted}){
+  return(
+    <div className="landing-page" data-testid="landing-page">
+      <nav className="landing-nav"><div className="landing-logo"><img src="/toppass5-logo-sm.jpeg" alt="TopPass5" className="brand-logo-mark"/><span>TOPPASS5</span></div><button className="primary" data-testid="landing-get-started" onClick={onGetStarted}>Get Started <ArrowUpRight size={16}/></button></nav>
+      <section className="landing-hero"><div className="landing-hero-content"><p className="eyebrow">MILITARY-GRADE ENCRYPTION</p><h1>Your passwords<br/>deserve a <em>fortress.</em></h1><p className="landing-sub">TopPass5 is a zero-knowledge encrypted vault that protects your most sensitive data with multi-layer authentication, crypto-style security, and AES-256 encryption.</p><div className="landing-ctas"><button className="primary landing-cta-main" data-testid="landing-cta-create" onClick={onGetStarted}><LockKeyhole size={18}/> Create Your Vault</button><button className="secondary landing-cta-sec" onClick={()=>document.getElementById('features')?.scrollIntoView({behavior:'smooth'})}><Eye size={16}/> See How It Works</button></div></div><div className="landing-hero-visual"><div className="vault-graphic"><div className="vault-ring ring1"/><div className="vault-ring ring2"/><div className="vault-ring ring3"/><div className="vault-core"><ShieldCheck size={48}/></div></div></div></section>
+      <section className="landing-features" id="features"><p className="eyebrow" style={{textAlign:'center'}}>WHY TOPPASS5</p><h2 style={{textAlign:'center',marginBottom:'40px'}}>Security that never sleeps</h2><div className="feature-grid">
+        <div className="feature-card" data-testid="feature-encryption"><div className="feature-icon"><Lock size={24}/></div><h3>AES-256 Encryption</h3><p>Every password and value is encrypted before it ever touches our servers. Even we can't read your data.</p></div>
+        <div className="feature-card" data-testid="feature-multilayer"><div className="feature-icon"><Shield size={24}/></div><h3>Multi-Layer Auth</h3><p>3 layers of protection: Email + Password, Birthday verification, and Crypto Type Pass quiz — all required to access your vault.</p></div>
+        <div className="feature-card" data-testid="feature-crypto"><div className="feature-icon"><KeyRound size={24}/></div><h3>Crypto Type Pass</h3><p>20 unique 5-character passwords generated for you. The system quizzes you on random ones — like a crypto wallet, but for your vault.</p></div>
+        <div className="feature-card" data-testid="feature-hardcore"><div className="feature-icon"><Skull size={24}/></div><h3>Hardcore Mode</h3><p>Optional self-destruct. Too many failed attempts? Account and all data permanently deleted. Customizable limits.</p></div>
+        <div className="feature-card" data-testid="feature-zero"><div className="feature-icon"><EyeOff size={24}/></div><h3>Zero Knowledge</h3><p>We never see your passwords in plaintext. Your birthday and crypto passes are stored as one-way hashes.</p></div>
+        <div className="feature-card" data-testid="feature-advance"><div className="feature-icon"><ShieldAlert size={24}/></div><h3>Advance Mode</h3><p>Extra passphrase protection per item. 4 wrong attempts = 3-day lockout. No exceptions, no recovery.</p></div>
+      </div></section>
+      <section className="landing-security"><div className="security-badge-row"><div className="sec-badge"><Lock size={20}/><span>AES-256</span></div><div className="sec-badge"><Shield size={20}/><span>3-Layer Auth</span></div><div className="sec-badge"><ShieldCheck size={20}/><span>Zero Knowledge</span></div><div className="sec-badge"><Activity size={20}/><span>Audit Logs</span></div></div><h2>Built for people who take security seriously</h2><p>TopPass5 is designed from the ground up with security as the core principle. No shortcuts, no compromises. Your data stays encrypted, your identity stays verified, and your vault stays yours.</p></section>
+      <footer className="landing-footer"><div className="footer-brand"><img src="https://img.sanishtech.com/u/7ad9ec964e6da7120bb20b71fd4cbcb3.png" alt="ZNQ" className="znq-logo"/><span>by ZNQ NETWORK</span></div><p>TopPass5 — Your secrets. Only yours.</p></footer>
+    </div>
+  );
+}
+
 export default function App(){
   const [user,setUser]=useState(null); const [booting,setBooting]=useState(true);
+  const [showLanding,setShowLanding]=useState(true);
+  const [showAuth,setShowAuth]=useState(false);
   useEffect(()=>{
-    const minDelay=new Promise(r=>setTimeout(r,1500));
+    const minDelay=new Promise(r=>setTimeout(r,6000));
     const t=new URLSearchParams(window.location.search).get('token');if(t){localStorage.setItem('vault_token',t);window.history.replaceState({},'','/')}
     const token=localStorage.getItem('vault_token');
-    const authCheck=token?client.get('/auth/me',authHeader()).then(r=>setUser(r.data)).catch(()=>localStorage.removeItem('vault_token')):Promise.resolve();
+    const authCheck=token?client.get('/auth/me',authHeader()).then(r=>{setUser(r.data);setShowLanding(false);setShowAuth(false)}).catch(()=>localStorage.removeItem('vault_token')):Promise.resolve();
     Promise.all([minDelay,authCheck]).finally(()=>setBooting(false));
   },[]);
   const shareToken=new URLSearchParams(window.location.search).get('share');
   const resetToken=new URLSearchParams(window.location.search).get('reset');
   if(shareToken)return <ShareView token={shareToken}/>;
   if(resetToken)return <ResetView token={resetToken}/>;
-  const logout=()=>{localStorage.removeItem('vault_token');setUser(null)};
+  const logout=()=>{localStorage.removeItem('vault_token');setUser(null);setShowLanding(true);setShowAuth(false)};
   if(booting)return <LoadingScreen/>;
   const isAdmin=user?.is_admin;
   if(isAdmin&&new URLSearchParams(window.location.search).get('admin')==='1')return <AdminPanel user={user} onLogout={logout}/>;
-  return user?<Vault user={user} onLogout={logout}/>:<Auth onLogin={setUser}/>
+  const onLogin=(u)=>{setUser(u);setShowLanding(false);setShowAuth(false)};
+  if(user)return <Vault user={user} onLogout={logout}/>;
+  if(showAuth)return <Auth onLogin={onLogin}/>;
+  return <LandingPage onGetStarted={()=>{setShowLanding(false);setShowAuth(true)}}/>;
 }
 
 function LoadingScreen(){
-  return <div className="loading-screen"><div className="ls-bar"/><div className="ls-center"><div className="ls-title">TOPPASS5</div><div className="ls-sub">SECURING YOUR VAULT<span className="ls-cursor"/></div></div><div className="ls-company"><img src="https://img.sanishtech.com/u/7ad9ec964e6da7120bb20b71fd4cbcb3.png" alt="ZNQ NETWORK" className="znq-logo"/><p className="loading-by">by ZNQ NETWORK</p></div></div>
+  return <div className="loading-screen"><div className="ls-bar"/><div className="ls-grid-bg"/>
+    <div className="ls-center">
+      <div className="ls-shield"><ShieldCheck size={36}/></div>
+      <div className="ls-title">TOPPASS5</div>
+      <div className="ls-sub">SECURING YOUR VAULT<span className="ls-cursor"/></div>
+      <div className="ls-features"><span><Lock size={12}/> AES-256 Encrypted</span><span><Shield size={12}/> 3-Layer Auth</span><span><Activity size={12}/> Zero Knowledge</span></div>
+      <div className="ls-tagline">Military-grade security for your passwords</div>
+    </div>
+    <div className="ls-company"><img src="https://img.sanishtech.com/u/7ad9ec964e6da7120bb20b71fd4cbcb3.png" alt="ZNQ NETWORK" className="znq-logo"/><p className="loading-by">by ZNQ NETWORK</p><p className="ls-safety">Safety First &bull; Security Always &bull; Data Protected</p></div>
+  </div>
 }

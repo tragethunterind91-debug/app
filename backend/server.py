@@ -83,7 +83,7 @@ def public_user(u):
         'id': u['id'], 'email': u['email'], 'name': u.get('name', u['email'].split('@')[0]),
         'has_birthday': bool(u.get('birthday_hash')),
         'layer3_enabled': u.get('layer3_enabled', False),
-        'disclaimer_accepted': u.get('disclaimer_accepted', False),
+        'disclaimer_enabled': u.get('disclaimer_enabled', False),
         'hardcore_enabled': u.get('hardcore_enabled', False),
     }
 def safe_item(doc):
@@ -98,24 +98,23 @@ async def root(): return {'message': 'CryptonVault API'}
 async def register(data: Credentials):
     if await db.users.find_one({'email': data.email.lower()}): raise HTTPException(409, 'An account already exists')
     if not data.birthday: raise HTTPException(400, 'Birthday is required')
-    phrase = gen_phrase()
     l3_passwords = gen_l3_passwords(20, 5)
     user = {
         'id': str(uuid.uuid4()), 'email': data.email.lower(), 'password': pwd.hash(data.password),
-        'name': data.email.split('@')[0], 'phrase_hash': hash_phrase(phrase),
+        'name': data.email.split('@')[0],
         'birthday_hash': hash_birthday(data.birthday),
         'layer3_enabled': False,
         'layer3_passwords_enc': fernet.encrypt(json.dumps(l3_passwords).encode()).decode(),
         'layer3_change_count': 0,
-        'layer3_change_week_start': datetime.now(timezone.utc).isoformat(),
-        'disclaimer_accepted': False,
+        'layer3_change_month_start': datetime.now(timezone.utc).isoformat(),
+        'disclaimer_enabled': False,
         'hardcore_enabled': False,
         'hardcore_settings': {'max_login_fail_days': 4, 'max_login_fails': 16, 'max_daily_tries': 4, 'max_layer3_fails': 8},
         'failed_logins': {'count': 0, 'daily_count': 0, 'last_fail_date': None, 'consecutive_days': 0, 'layer3_fails': 0},
         'created_at': datetime.now(timezone.utc).isoformat()
     }
     await db.users.insert_one(user)
-    return {'token': token_for(user), 'user': public_user(user), 'phrase': phrase, 'layer3_passwords': l3_passwords}
+    return {'token': token_for(user), 'user': public_user(user), 'layer3_passwords': l3_passwords}
 
 @router.post('/auth/login')
 async def login(data: Credentials):
@@ -230,11 +229,12 @@ async def verify_layer3(data: L3QuizAnswer, authorization: str | None = Header(d
     await log_event(user['id'], 'LOGIN', user['email'])
     return {'stage': 'complete', 'token': token_for(user), 'user': public_user(user)}
 
-@router.post('/auth/accept-disclaimer')
-async def accept_disclaimer(authorization: str | None = Header(default=None)):
+@router.post('/auth/toggle-disclaimer')
+async def toggle_disclaimer(data: dict, authorization: str | None = Header(default=None)):
     claims = auth_user(authorization)
-    await db.users.update_one({'id': claims['sub']}, {'$set': {'disclaimer_accepted': True}})
-    return {'ok': True}
+    enabled = bool(data.get('enabled', False))
+    await db.users.update_one({'id': claims['sub']}, {'$set': {'disclaimer_enabled': enabled}})
+    return {'ok': True, 'enabled': enabled}
 
 @router.post('/auth/set-birthday')
 async def set_birthday(data: BirthdayVerify, authorization: str | None = Header(default=None)):
@@ -312,20 +312,20 @@ async def regenerate_layer3(data: dict, authorization: str | None = Header(defau
     user = await db.users.find_one({'id': claims['sub']}, {'_id': 0})
     if not user: raise HTTPException(404, 'User not found')
     if user.get('layer3_enabled'): raise HTTPException(400, 'Disable Layer 3 before regenerating passwords')
-    # Check weekly limit (5 changes per week)
-    week_start = user.get('layer3_change_week_start')
+    # Check monthly limit (3 changes per month)
+    month_start = user.get('layer3_change_month_start') or user.get('layer3_change_week_start')
     change_count = user.get('layer3_change_count', 0)
     now = datetime.now(timezone.utc)
-    if week_start:
-        ws = datetime.fromisoformat(week_start).replace(tzinfo=timezone.utc) if '+' not in str(week_start) else datetime.fromisoformat(week_start)
-        if (now - ws).days < 7:
-            if change_count >= 5:
-                raise HTTPException(429, 'You can only change Layer 3 passwords 5 times per week. Try again later.')
+    if month_start:
+        ms = datetime.fromisoformat(month_start).replace(tzinfo=timezone.utc) if '+' not in str(month_start) else datetime.fromisoformat(month_start)
+        if (now - ms).days < 30:
+            if change_count >= 3:
+                raise HTTPException(429, 'You can only change Layer 3 passwords 3 times per month. Try again later.')
         else:
             change_count = 0
-            week_start = now.isoformat()
+            month_start = now.isoformat()
     else:
-        week_start = now.isoformat()
+        month_start = now.isoformat()
     # Verify current password for safety
     if not data.get('password'): raise HTTPException(400, 'Current password required')
     if not pwd.verify(data['password'], user['password']): raise HTTPException(401, 'Wrong password')
@@ -333,10 +333,10 @@ async def regenerate_layer3(data: dict, authorization: str | None = Header(defau
     await db.users.update_one({'id': claims['sub']}, {'$set': {
         'layer3_passwords_enc': fernet.encrypt(json.dumps(new_passwords).encode()).decode(),
         'layer3_change_count': change_count + 1,
-        'layer3_change_week_start': week_start,
+        'layer3_change_month_start': month_start,
     }})
-    await log_event(claims['sub'], 'L3_REGEN', f"change #{change_count + 1} this week")
-    return {'passwords': new_passwords, 'changes_remaining': 4 - change_count}
+    await log_event(claims['sub'], 'L3_REGEN', f"change #{change_count + 1} this month")
+    return {'passwords': new_passwords, 'changes_remaining': 2 - change_count}
 
 @router.get('/auth/hardcore-settings')
 async def get_hardcore_settings(authorization: str | None = Header(default=None)):
@@ -361,43 +361,6 @@ async def update_hardcore_settings(data: HardcoreSettings, authorization: str | 
     }})
     await log_event(claims['sub'], 'HARDCORE_UPDATE', f"enabled={data.enabled}")
     return {'ok': True}
-
-@router.post('/auth/phrase-login')
-async def phrase_login(data: PhraseIn):
-    user=await db.users.find_one({'email':data.email.lower(),'phrase_hash':hash_phrase(data.phrase)},{'_id':0})
-    if not user: raise HTTPException(401,'Email or recovery phrase is incorrect')
-    await log_event(user['id'],'PHRASE_LOGIN',data.email.lower()); return {'token':token_for(user),'user':public_user(user)}
-
-@router.post('/auth/phrase-reset')
-async def phrase_reset(data: PhraseResetIn):
-    user=await db.users.find_one({'email':data.email.lower(),'phrase_hash':hash_phrase(data.phrase)},{'_id':0})
-    if not user: raise HTTPException(401,'Email or recovery phrase is incorrect')
-    await db.users.update_one({'id':user['id']},{'$set':{'password':pwd.hash(data.new_password)}})
-    await log_event(user['id'],'PHRASE_RESET',data.email.lower()); return {'message':'Password reset successfully'}
-
-@router.post('/auth/set-phrase')
-async def set_phrase(authorization: str | None = Header(default=None)):
-    user=auth_user(authorization); phrase=gen_phrase()
-    await db.users.update_one({'id':user['sub']},{'$set':{'phrase_hash':hash_phrase(phrase)}})
-    await log_event(user['sub'],'SET_PHRASE',user['email']); return {'phrase':phrase}
-
-@router.get('/auth/google')
-async def google_login(request: Request):
-    oauth = OAuth(); oauth.register(name='google', client_id=os.environ['GOOGLE_CLIENT_ID'], client_secret=os.environ['GOOGLE_CLIENT_SECRET'], server_metadata_url='https://accounts.google.com/.well-known/openid-configuration', client_kwargs={'scope':'openid email profile'})
-    request.session['frontend_origin'] = request.query_params.get('frontend_origin', '')
-    # REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
-    return await oauth.google.authorize_redirect(request, str(request.base_url).rstrip('/') + '/api/auth/google/callback')
-
-@router.get('/auth/google/callback')
-async def google_callback(request: Request):
-    oauth = OAuth(); oauth.register(name='google', client_id=os.environ['GOOGLE_CLIENT_ID'], client_secret=os.environ['GOOGLE_CLIENT_SECRET'], server_metadata_url='https://accounts.google.com/.well-known/openid-configuration', client_kwargs={'scope':'openid email profile'})
-    token = await oauth.google.authorize_access_token(request); info = token.get('userinfo') or await oauth.google.userinfo(token=token)
-    email = info['email'].lower(); user = await db.users.find_one({'email': email}, {'_id': 0})
-    if not user:
-        user = {'id': str(uuid.uuid4()), 'email': email, 'name': info.get('name', email.split('@')[0]), 'google': True, 'created_at': datetime.now(timezone.utc).isoformat()}; await db.users.insert_one(user)
-    # REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
-    destination = request.session.pop('frontend_origin', '')
-    return RedirectResponse(url=f"{destination}/?token={token_for(user)}" if destination else '/')
 
 @router.get('/auth/me')
 async def me(authorization: str | None = Header(default=None)):
