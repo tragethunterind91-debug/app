@@ -27,6 +27,9 @@ function Auth({onLogin}){
   const [regBirthday,setRegBirthday]=useState('');
   const [regBirthdayConfirm,setRegBirthdayConfirm]=useState('');
   const [l3Modal,setL3Modal]=useState(null); // {passwords, phrase, user}
+  // Login attempts display
+  const [loginStatus,setLoginStatus]=useState(null);
+  const checkLoginStatus=async(em)=>{if(!em||mode!=='login')return;try{const r=await client.get(`/auth/login-status?email=${encodeURIComponent(em)}`);setLoginStatus(r.data)}catch{setLoginStatus(null)}};
 
   const submit=async(e)=>{
     e.preventDefault();setBusy(true);
@@ -125,8 +128,9 @@ function Auth({onLogin}){
                 <h2>{mode==='login'?'Welcome back':'Create your vault'}</h2>
                 <p className="muted">{mode==='login'?'Your private command center is waiting.':'Start protecting what matters in under a minute.'}</p>
                 <form onSubmit={submit} data-testid="auth-form">
-                  <label>Email<input data-testid="auth-email-input" type="email" value={email} onChange={e=>setEmail(e.target.value)} required placeholder="you@example.com"/></label>
+                  <label>Email<input data-testid="auth-email-input" type="email" value={email} onChange={e=>setEmail(e.target.value)} onBlur={e=>checkLoginStatus(e.target.value)} required placeholder="you@example.com"/></label>
                   <label>Password<input data-testid="auth-password-input" type="password" value={password} onChange={e=>setPassword(e.target.value)} required minLength="8" placeholder="At least 8 characters"/></label>
+                  {mode==='login'&&loginStatus&&loginStatus.hardcore&&<div className="login-attempts-warn" data-testid="login-attempts-warning"><AlertTriangle size={14}/><div><b>Hardcore Mode Active</b><p>Today: {loginStatus.daily_used}/{loginStatus.daily_limit} tries used &bull; Total fails: {loginStatus.total_fails}/{loginStatus.total_limit} &bull; Consecutive days: {loginStatus.consecutive_days}/{loginStatus.days_limit}</p></div></div>}
                   {mode==='register'&&<><label>Birthday<input data-testid="reg-birthday-input" type="date" value={regBirthday} onChange={e=>setRegBirthday(e.target.value)} required/></label><label>Confirm Birthday<input data-testid="reg-birthday-confirm" type="date" value={regBirthdayConfirm} onChange={e=>setRegBirthdayConfirm(e.target.value)} required/></label></>}
                   <button className="primary wide" data-testid="auth-submit-button" disabled={busy}>{busy?'Securing…':mode==='login'?'Unlock vault':'Create vault'} <ArrowUpRight size={17}/></button>
                 </form>
@@ -192,6 +196,10 @@ function Vault({user,onLogout}){
   const [l3RegenPwd,setL3RegenPwd]=useState('');
   const [l3QuizMode,setL3QuizMode]=useState(null); // {indices,answers} for enable quiz
   const [hardcoreData,setHardcoreData]=useState(null);
+  const [showBirthdaySetup,setShowBirthdaySetup]=useState(false);
+  const [bdaySetup,setBdaySetup]=useState('');
+  const [bdaySetupConfirm,setBdaySetupConfirm]=useState('');
+  const [hasBirthday,setHasBirthday]=useState(user.has_birthday||false);
 
   // PIN inactivity timer
   useEffect(()=>{
@@ -287,6 +295,20 @@ function Vault({user,onLogout}){
     try{await client.put('/auth/hardcore-settings',newData,authHeader());setHardcoreData(d=>({...d,enabled:newData.enabled,settings:{max_login_fail_days:newData.max_login_fail_days,max_login_fails:newData.max_login_fails,max_daily_tries:newData.max_daily_tries,max_layer3_fails:newData.max_layer3_fails}}));toast.success(newData.enabled?'Hardcore Mode enabled — be careful!':'Hardcore Mode disabled')}catch(e){toast.error(e.response?.data?.detail||'Failed')}
   };
   const acceptDisclaimer=async()=>{try{await client.post('/auth/accept-disclaimer',{},authHeader());setShowDisclaimer(false)}catch{setShowDisclaimer(false)}};
+  const saveBirthday=async()=>{
+    if(!bdaySetup||!bdaySetupConfirm){toast.error('Both fields required');return}
+    if(bdaySetup!==bdaySetupConfirm){toast.error('Birthdays do not match');return}
+    if(!window.confirm('Are you sure? Birthday CANNOT be changed once set. There is NO recovery.'))return;
+    try{await client.post('/auth/set-birthday',{birthday:bdaySetup},authHeader());setHasBirthday(true);setShowBirthdaySetup(false);setBdaySetup('');setBdaySetupConfirm('');toast.success('Birthday set! You will need it on every login.')}catch(e){toast.error(e.response?.data?.detail||'Failed to set birthday')}
+  };
+  const exportL3Passwords=async()=>{
+    const data=await loadL3Passwords();if(!data)return;
+    const lines=['═══════════════════════════════════════','  TOPPASS5 — LAYER 3 CRYPTO TYPE PASS','═══════════════════════════════════════','','  Keep this file OFFLINE and SECURE.','  You need these passwords to log in.','','───────────────────────────────────────'];
+    data.passwords.forEach((p,i)=>lines.push(`  Pass #${String(i+1).padStart(2,'0')}:  ${p}`));
+    lines.push('','───────────────────────────────────────',`  Generated: ${new Date().toISOString().slice(0,10)}`,`  Account: ${user.email}`,'  WARNING: Do NOT share this file.','═══════════════════════════════════════');
+    const blob=new Blob([lines.join('\n')],{type:'text/plain'});
+    const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`toppass5-layer3-${Date.now()}.txt`;a.click();URL.revokeObjectURL(a.href);toast.success('Crypto type passwords exported!');
+  };
 
   const isItemLocked=(item)=>item.advance_locked_until&&new Date(item.advance_locked_until)>new Date();
   const autoComp=settings.autofill?undefined:'off';
@@ -383,9 +405,13 @@ function Vault({user,onLogout}){
       <div className="settings-row" data-testid="autofill-setting"><div className="settings-info"><b>Browser Autofill</b><p>Allow browser to autofill and suggest saving vault values in forms.</p></div><label className="toggle-switch"><input type="checkbox" checked={settings.autofill} onChange={e=>saveSettingsPref({...settings,autofill:e.target.checked})}/><span className="toggle-slider"/></label></div>
       <div className="settings-row" data-testid="pin-setting"><div className="settings-info"><b>Vault PIN Lock</b><p>Auto-locks vault after 5 min of inactivity.</p></div><label className="toggle-switch"><input type="checkbox" checked={pinEnabled} onChange={e=>{if(!e.target.checked){localStorage.removeItem('vault_pin_hash');setPinEnabled(false);setShowPinLock(false);setSetupPinMode(false);if(inactivityRef.current)clearTimeout(inactivityRef.current);toast.success('PIN lock disabled')}else setSetupPinMode(true)}}/><span className="toggle-slider"/></label></div>
       {setupPinMode&&<div className="pin-setup-section"><p className="muted" style={{fontSize:'12px',margin:'0 0 10px'}}>Set your 4-digit PIN:</p><div className="pin-setup-row"><input type="password" maxLength="4" inputMode="numeric" data-testid="pin-setup-input" value={setupPinValue} onChange={e=>setSetupPinValue(e.target.value.replace(/\D/g,'').slice(0,4))} placeholder="1234" className="pin-input-field"/><input type="password" maxLength="4" inputMode="numeric" data-testid="pin-confirm-input" value={setupPinConfirm} onChange={e=>setSetupPinConfirm(e.target.value.replace(/\D/g,'').slice(0,4))} placeholder="Confirm" className="pin-input-field"/><button className="primary" data-testid="pin-confirm-btn" onClick={async()=>{if(setupPinValue.length!==4||setupPinValue!==setupPinConfirm){setSetupPinErr('PINs must be 4 digits and match');return}const h=await hashPin(setupPinValue);localStorage.setItem('vault_pin_hash',h);setPinEnabled(true);setSetupPinMode(false);setSetupPinValue('');setSetupPinConfirm('');setSetupPinErr('');toast.success('PIN lock enabled!')}}>Set PIN</button></div>{setupPinErr&&<p style={{color:'var(--red)',fontSize:'12px',marginTop:'6px'}}>{setupPinErr}</p>}</div>}
+      <div className="settings-divider"><span>LAYER 2 — BIRTHDAY</span></div>
+      {!hasBirthday?<div className="settings-row clickable" data-testid="birthday-setup-btn" onClick={()=>{setShowBirthdaySetup(true);setShowSettings(false)}}><div className="settings-info"><b>Set Birthday</b><p>Add Layer 2 protection. You'll verify your birthday on every login.</p></div><Calendar size={16} style={{color:'var(--green)',flexShrink:0}}/></div>
+      :<div className="settings-row"><div className="settings-info"><b>Birthday Set</b><p>Layer 2 is active. You verify your birthday on every login.</p></div><Check size={16} style={{color:'var(--green)',flexShrink:0}}/></div>}
       <div className="settings-divider"><span>LAYER 3 — CRYPTO TYPE PASS</span></div>
       <div className="settings-row" data-testid="l3-toggle-setting"><div className="settings-info"><b>Layer 3 Lock</b><p>Require crypto type pass verification on every login. You must pass a quiz to enable.</p></div><label className="toggle-switch"><input type="checkbox" checked={l3Enabled} onChange={e=>toggleL3(e.target.checked)}/><span className="toggle-slider"/></label></div>
       <div className="settings-row clickable" data-testid="l3-view-btn" onClick={async()=>{await loadL3Passwords();setShowL3View(true);setShowSettings(false)}}><div className="settings-info"><b>View My 20 Passwords</b><p>See your current Layer 3 crypto type passwords.</p></div><ArrowUpRight size={16} style={{color:'var(--muted)',flexShrink:0}}/></div>
+      <div className="settings-row clickable" data-testid="l3-export-btn" onClick={exportL3Passwords}><div className="settings-info"><b>Export Passwords</b><p>Download your 20 crypto type passwords as a text file.</p></div><Download size={16} style={{color:'var(--muted)',flexShrink:0}}/></div>
       <div className="settings-row clickable" data-testid="l3-regen-btn" onClick={()=>{setShowL3Regen(true);setShowSettings(false)}}><div className="settings-info"><b>Regenerate Passwords</b><p>Get new random passwords. Max 5 changes per week. Requires password.</p></div><RefreshCw size={16} style={{color:'var(--muted)',flexShrink:0}}/></div>
       <div className="settings-divider"><span>HARDCORE MODE</span></div>
       <div className="settings-row clickable" data-testid="hardcore-btn" onClick={async()=>{await loadHardcore();setShowSecuritySettings(true);setShowSettings(false)}}><div className="settings-info"><b><Skull size={14} style={{display:'inline',verticalAlign:'middle',marginRight:'6px'}}/>Hardcore Mode</b><p>Auto-delete account on too many failures. Customize limits.</p></div><ArrowUpRight size={16} style={{color:'var(--red)',flexShrink:0}}/></div>
@@ -411,6 +437,14 @@ function Vault({user,onLogout}){
     {showL3Regen&&<div className="modal-backdrop"><div className="modal" data-testid="l3-regen-modal"><button type="button" className="modal-close icon-btn" onClick={()=>{setShowL3Regen(false);setL3RegenPwd('')}}><X/></button><p className="eyebrow">REGENERATE PASSWORDS</p><h2>New Crypto Type Passwords</h2><p className="muted">This generates 20 new random passwords. Max 5 changes per week. Layer 3 must be disabled first.</p>
       <label>Confirm Your Password<input data-testid="l3-regen-pwd" type="password" value={l3RegenPwd} onChange={e=>setL3RegenPwd(e.target.value)} placeholder="Enter your account password"/></label>
       <button className="primary wide" data-testid="l3-regen-submit" onClick={regenL3} disabled={!l3RegenPwd}><RefreshCw size={15}/> Generate New Passwords</button>
+    </div></div>}
+
+    {/* Birthday Setup for legacy users */}
+    {showBirthdaySetup&&<div className="modal-backdrop"><div className="modal" data-testid="birthday-setup-modal"><button type="button" className="modal-close icon-btn" onClick={()=>{setShowBirthdaySetup(false);setBdaySetup('');setBdaySetupConfirm('')}}><X/></button><p className="eyebrow">LAYER 2 SETUP</p><h2>Set Your Birthday</h2>
+      <p className="muted">This adds Layer 2 protection. You'll need to verify your birthday on every login. <b style={{color:'var(--red)'}}>This cannot be changed later.</b></p>
+      <label>Birthday<input data-testid="bday-setup-input" type="date" value={bdaySetup} onChange={e=>setBdaySetup(e.target.value)} required/></label>
+      <label>Confirm Birthday<input data-testid="bday-setup-confirm" type="date" value={bdaySetupConfirm} onChange={e=>setBdaySetupConfirm(e.target.value)} required/></label>
+      <button className="primary wide" data-testid="bday-setup-submit" onClick={saveBirthday} disabled={!bdaySetup||!bdaySetupConfirm}><Calendar size={15}/> Set Birthday Permanently</button>
     </div></div>}
 
     {/* Hardcore Mode Settings */}

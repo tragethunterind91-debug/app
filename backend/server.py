@@ -236,6 +236,36 @@ async def accept_disclaimer(authorization: str | None = Header(default=None)):
     await db.users.update_one({'id': claims['sub']}, {'$set': {'disclaimer_accepted': True}})
     return {'ok': True}
 
+@router.post('/auth/set-birthday')
+async def set_birthday(data: BirthdayVerify, authorization: str | None = Header(default=None)):
+    claims = auth_user(authorization)
+    user = await db.users.find_one({'id': claims['sub']}, {'_id': 0})
+    if not user: raise HTTPException(404, 'User not found')
+    if user.get('birthday_hash'): raise HTTPException(400, 'Birthday already set. Cannot change.')
+    await db.users.update_one({'id': claims['sub']}, {'$set': {'birthday_hash': hash_birthday(data.birthday)}})
+    await log_event(claims['sub'], 'BIRTHDAY_SET', 'Legacy user added birthday')
+    return {'ok': True}
+
+@router.get('/auth/login-status')
+async def get_login_status(email: str):
+    """Public endpoint: returns fail status for displaying attempts info on login screen."""
+    user = await db.users.find_one({'email': email.lower()}, {'_id': 0})
+    if not user: return {'hardcore': False}
+    if not user.get('hardcore_enabled'): return {'hardcore': False}
+    fl = user.get('failed_logins', {})
+    hs = user.get('hardcore_settings', {})
+    today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    daily_used = fl.get('daily_count', 0) if fl.get('last_fail_date') == today else 0
+    return {
+        'hardcore': True,
+        'daily_used': daily_used,
+        'daily_limit': hs.get('max_daily_tries', 4),
+        'total_fails': fl.get('count', 0),
+        'total_limit': hs.get('max_login_fails', 16),
+        'consecutive_days': fl.get('consecutive_days', 0),
+        'days_limit': hs.get('max_login_fail_days', 4),
+    }
+
 @router.get('/auth/layer3-passwords')
 async def get_layer3_passwords(authorization: str | None = Header(default=None)):
     claims = auth_user(authorization)

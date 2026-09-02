@@ -154,3 +154,7 @@
 .sec-item-btn{cursor:pointer;transition:color .15s}.sec-item-btn:hover{color:var(--blue)}
 .share-exp{font:11px 'DM Mono';color:#4a5568}
 @media(max-width:600px){.l3-grid{grid-template-columns:repeat(2,1fr)}}
+/* Login attempts warning */
+.login-attempts-warn{display:flex;gap:10px;align-items:flex-start;padding:12px 14px;background:rgba(255,107,116,.08);border:1px solid rgba(255,107,116,.2);border-radius:8px;margin:-4px 0 8px;color:#ff8a8a}
+.login-attempts-warn b{display:block;font-size:12px;color:#ff6b74;margin-bottom:2px}
+.login-attempts-warn p{font-size:11px;color:#9e7a7d;margin:0;line-height:1.5}
