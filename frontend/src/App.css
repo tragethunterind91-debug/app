@@ -105,6 +105,7 @@
 .help-list li{margin-bottom:2px}
 .help-section code{background:rgba(255,255,255,.08);padding:2px 6px;border-radius:4px;font-size:11px;font-family:'DM Mono',monospace;color:#a0aec0}
 /* Layer 3 Crypto Passwords */
+.item-form-modal{max-height:88vh;overflow-y:auto}
 .l3-reveal-modal{max-width:600px;max-height:90vh;overflow-y:auto}
 .l3-section{padding:12px 0;border-bottom:1px solid var(--line)}
 .l3-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
