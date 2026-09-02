@@ -1,6 +1,6 @@
 import {useEffect, useMemo, useRef, useState} from 'react';
 import axios from 'axios';
-import {ShieldCheck, LockKeyhole, Plus, Search, Eye, EyeOff, Copy, Download, Trash2, LogOut, KeyRound, ArrowUpRight, X, Check, RefreshCw, Pencil, Wand2, Upload, Share2, Activity, ShieldAlert, Gauge, Timer, ExternalLink, Lock, HelpCircle, Settings} from 'lucide-react';
+import {ShieldCheck, LockKeyhole, Plus, Search, Eye, EyeOff, Copy, Download, Trash2, LogOut, KeyRound, ArrowUpRight, X, Check, RefreshCw, Pencil, Wand2, Upload, Share2, Activity, ShieldAlert, Gauge, Timer, ExternalLink, Lock, HelpCircle, Settings, Calendar, Shield, AlertTriangle, ToggleLeft, ToggleRight, FileText, Skull} from 'lucide-react';
 import './App.css';
 import './brand.css';
 import {Toaster, toast} from 'sonner';
@@ -16,6 +16,17 @@ function Auth({onLogin}){
   const [mode,setMode]=useState('login');const [email,setEmail]=useState('');const [password,setPassword]=useState('');const [busy,setBusy]=useState(false);
   const [phraseModal,setPhraseModal]=useState(null);const [phraseMode,setPhraseMode]=useState(false);const [phraseWords,setPhraseWords]=useState('');const [phraseNewPwd,setPhraseNewPwd]=useState('');const [phraseAction,setPhraseAction]=useState('login');
   const [forgotModal,setForgotModal]=useState(null);
+  // Multi-stage login
+  const [loginStage,setLoginStage]=useState(null); // null | 'birthday' | 'layer3'
+  const [stageToken,setStageToken]=useState(null);
+  const [birthdayInput,setBirthdayInput]=useState('');
+  const [quizIndices,setQuizIndices]=useState([]);
+  const [quizAnswers,setQuizAnswers]=useState({});
+  const [stageUser,setStageUser]=useState(null);
+  // Registration extras
+  const [regBirthday,setRegBirthday]=useState('');
+  const [regBirthdayConfirm,setRegBirthdayConfirm]=useState('');
+  const [l3Modal,setL3Modal]=useState(null); // {passwords, phrase, user}
 
   const submit=async(e)=>{
     e.preventDefault();setBusy(true);
@@ -23,15 +34,68 @@ function Auth({onLogin}){
       if(mode==='forgot'){
         const r=await client.post('/auth/recovery',{email});
         setForgotModal({link:`${window.location.origin}/?reset=${r.data.reset_code}`});
-      }else{
-        const r=await client.post(`/auth/${mode==='login'?'login':'register'}`,{email,password});
+      }else if(mode==='register'){
+        if(!regBirthday){toast.error('Birthday is required');setBusy(false);return}
+        if(regBirthday!==regBirthdayConfirm){toast.error('Birthdays do not match');setBusy(false);return}
+        const r=await client.post('/auth/register',{email,password,birthday:regBirthday});
         localStorage.setItem('vault_token',r.data.token);
-        if(r.data.phrase)setPhraseModal({phrase:r.data.phrase,user:r.data.user});else onLogin(r.data.user);
+        // Show L3 passwords + recovery phrase
+        setL3Modal({passwords:r.data.layer3_passwords,phrase:r.data.phrase,user:r.data.user});
+      }else{
+        const r=await client.post('/auth/login',{email,password});
+        if(r.data.stage==='birthday'){
+          setStageToken(r.data.token);setStageUser(r.data.user);setLoginStage('birthday');setBirthdayInput('');
+        }else{
+          localStorage.setItem('vault_token',r.data.token);
+          if(r.data.phrase)setPhraseModal({phrase:r.data.phrase,user:r.data.user});else onLogin(r.data.user);
+        }
       }
     }catch(e){toast.error(e.response?.data?.detail||'Could not sign in')}finally{setBusy(false)}
   };
 
+  const submitBirthday=async()=>{
+    setBusy(true);
+    try{
+      const r=await client.post('/auth/verify-birthday',{birthday:birthdayInput},{headers:{Authorization:`Bearer ${stageToken}`}});
+      if(r.data.stage==='layer3'){
+        setStageToken(r.data.token);setQuizIndices(r.data.quiz_indices);setQuizAnswers({});setLoginStage('layer3');
+      }else{
+        localStorage.setItem('vault_token',r.data.token);onLogin(r.data.user);setLoginStage(null);
+      }
+    }catch(e){toast.error(e.response?.data?.detail||'Birthday verification failed')}finally{setBusy(false)}
+  };
+
+  const submitLayer3Quiz=async()=>{
+    setBusy(true);
+    try{
+      const r=await client.post('/auth/verify-layer3',{answers:quizAnswers},{headers:{Authorization:`Bearer ${stageToken}`}});
+      localStorage.setItem('vault_token',r.data.token);onLogin(r.data.user);setLoginStage(null);
+    }catch(e){toast.error(e.response?.data?.detail||'Layer 3 verification failed')}finally{setBusy(false)}
+  };
+
   const submitPhrase=async(e)=>{e.preventDefault();setBusy(true);try{if(phraseAction==='login'){const r=await client.post('/auth/phrase-login',{email,phrase:phraseWords});localStorage.setItem('vault_token',r.data.token);onLogin(r.data.user)}else{await client.post('/auth/phrase-reset',{email,phrase:phraseWords,new_password:phraseNewPwd});toast.success('Password reset! Please sign in.');setPhraseMode(false);setMode('login')}}catch(e){toast.error(e.response?.data?.detail||'Recovery failed')}finally{setBusy(false)}};
+
+  // Birthday verification stage
+  if(loginStage==='birthday')return(
+    <main className="auth-shell"><section className="auth-art"><div className="brand"><img src="/toppass5-logo-sm.jpeg" alt="TopPass5" className="brand-logo-mark"/></div><div className="art-copy"><p className="eyebrow">LAYER 2 VERIFICATION</p><h1>Verify your<br/><em>identity.</em></h1><p>Enter your birthday to continue. This is a security checkpoint.</p></div><div className="security-stamp"><Calendar size={17}/><span>Birthday verification<br/><b>No forgot option — by design</b></span></div></section>
+    <section className="auth-panel"><div className="auth-card"><div className="mobile-brand brand"><img src="/toppass5-logo-sm.jpeg" alt="TopPass5" className="brand-logo-mark"/></div>
+      <p className="eyebrow">LAYER 2 — BIRTHDAY</p><h2>Confirm your birthday</h2><p className="muted">Enter the exact birthday you registered with. There is no recovery for this.</p>
+      <label>Birthday<input data-testid="birthday-verify-input" type="date" value={birthdayInput} onChange={e=>setBirthdayInput(e.target.value)} required/></label>
+      <button className="primary wide" data-testid="birthday-verify-submit" disabled={busy||!birthdayInput} onClick={submitBirthday}>{busy?'Verifying…':'Verify Birthday'} <ArrowUpRight size={17}/></button>
+      <button className="link-btn" data-testid="birthday-back-btn" onClick={()=>{setLoginStage(null);setStageToken(null)}}>← Back to login</button>
+    </div></section><Toaster theme="dark"/></main>
+  );
+
+  // Layer 3 quiz stage
+  if(loginStage==='layer3')return(
+    <main className="auth-shell"><section className="auth-art"><div className="brand"><img src="/toppass5-logo-sm.jpeg" alt="TopPass5" className="brand-logo-mark"/></div><div className="art-copy"><p className="eyebrow">LAYER 3 VERIFICATION</p><h1>Crypto<br/><em>Quiz.</em></h1><p>Answer correctly to access your vault. These are your 5-character crypto passwords.</p></div><div className="security-stamp"><Shield size={17}/><span>Layer 3 crypto-quiz<br/><b>Fail = access denied</b></span></div></section>
+    <section className="auth-panel"><div className="auth-card"><div className="mobile-brand brand"><img src="/toppass5-logo-sm.jpeg" alt="TopPass5" className="brand-logo-mark"/></div>
+      <p className="eyebrow">LAYER 3 — CRYPTO QUIZ</p><h2>What are your passwords?</h2><p className="muted">Enter the exact 5-character passwords for each position shown below.</p>
+      {quizIndices.map(idx=><label key={idx}>Pass #{idx+1}<input data-testid={`quiz-answer-${idx}`} type="text" maxLength={5} value={quizAnswers[String(idx)]||''} onChange={e=>setQuizAnswers(p=>({...p,[String(idx)]:e.target.value}))} placeholder="e.g. k8#mQ" autoComplete="off" style={{fontFamily:"'DM Mono',monospace",letterSpacing:'0.15em'}}/></label>)}
+      <button className="primary wide" data-testid="quiz-submit-btn" disabled={busy||quizIndices.some(i=>!(quizAnswers[String(i)]||'').trim())} onClick={submitLayer3Quiz}>{busy?'Verifying…':'Verify & Unlock'} <Lock size={16}/></button>
+      <button className="link-btn" data-testid="quiz-back-btn" onClick={()=>{setLoginStage(null);setStageToken(null)}}>← Back to login</button>
+    </div></section><Toaster theme="dark"/></main>
+  );
 
   return (
     <main className="auth-shell">
@@ -63,6 +127,7 @@ function Auth({onLogin}){
                 <form onSubmit={submit} data-testid="auth-form">
                   <label>Email<input data-testid="auth-email-input" type="email" value={email} onChange={e=>setEmail(e.target.value)} required placeholder="you@example.com"/></label>
                   <label>Password<input data-testid="auth-password-input" type="password" value={password} onChange={e=>setPassword(e.target.value)} required minLength="8" placeholder="At least 8 characters"/></label>
+                  {mode==='register'&&<><label>Birthday<input data-testid="reg-birthday-input" type="date" value={regBirthday} onChange={e=>setRegBirthday(e.target.value)} required/></label><label>Confirm Birthday<input data-testid="reg-birthday-confirm" type="date" value={regBirthdayConfirm} onChange={e=>setRegBirthdayConfirm(e.target.value)} required/></label></>}
                   <button className="primary wide" data-testid="auth-submit-button" disabled={busy}>{busy?'Securing…':mode==='login'?'Unlock vault':'Create vault'} <ArrowUpRight size={17}/></button>
                 </form>
                 <div className="or"><span>or continue with</span></div>
@@ -94,8 +159,18 @@ function Auth({onLogin}){
           )}
         </div>
       </section>
+      {/* Registration: L3 passwords + recovery phrase reveal */}
+      {l3Modal&&<div className="modal-backdrop"><div className="modal phrase-reveal-modal l3-reveal-modal" data-testid="l3-reveal-modal"><p className="eyebrow">ACCOUNT CREATED — SAVE THESE NOW</p><h2>Your Security Keys</h2>
+        <p className="muted phrase-warn">These are shown ONCE. Write them down or store offline. You need these to log in.</p>
+        <div className="l3-section"><h3 style={{fontSize:'13px',color:'#6f9bff',marginBottom:'8px'}}>20 Crypto Passwords (Layer 3)</h3><div className="l3-grid" data-testid="l3-passwords-grid">{l3Modal.passwords.map((p,i)=><div key={i} className="l3-pass-card" data-testid={`l3-pass-${i}`}><span className="l3-num">{i+1}</span><span className="l3-val">{p}</span></div>)}</div>
+        <button className="secondary" style={{marginTop:'10px',width:'100%'}} data-testid="copy-l3-passwords" onClick={()=>{copyText(l3Modal.passwords.map((p,i)=>`${i+1}: ${p}`).join('\n'));toast.success('All 20 passwords copied!')}}><Copy size={14}/> Copy All Passwords</button></div>
+        <div className="l3-section" style={{marginTop:'16px'}}><h3 style={{fontSize:'13px',color:'#27d3a2',marginBottom:'8px'}}>12-Word Recovery Phrase</h3><div className="phrase-grid" data-testid="phrase-grid">{l3Modal.phrase.split(' ').map((w,i)=><div key={i} className="phrase-word" data-testid={`phrase-word-${i}`}><span className="phrase-num">{i+1}</span><span>{w}</span></div>)}</div>
+        <button className="secondary" style={{marginTop:'10px',width:'100%'}} data-testid="copy-phrase-button" onClick={()=>{copyText(l3Modal.phrase);toast.success('Recovery phrase copied!')}}><Copy size={14}/> Copy Phrase</button></div>
+        <button className="primary wide" style={{marginTop:'16px'}} data-testid="l3-confirm-button" onClick={()=>{onLogin(l3Modal.user);setL3Modal(null)}}>I've saved everything — Enter vault</button>
+      </div></div>}
       {phraseModal&&<div className="modal-backdrop"><div className="modal phrase-reveal-modal" data-testid="phrase-reveal-modal"><p className="eyebrow">LAYER 3 BACKUP</p><h2>Your Recovery Phrase</h2><p className="muted phrase-warn">Write these 12 words in order. Store them safely offline. This is the ONLY way to recover your vault if you lose your password.</p><div className="phrase-grid" data-testid="phrase-grid">{phraseModal.phrase.split(' ').map((w,i)=><div key={i} className="phrase-word" data-testid={`phrase-word-${i}`}><span className="phrase-num">{i+1}</span><span>{w}</span></div>)}</div><div className="phrase-actions"><button className="secondary" data-testid="copy-phrase-button" onClick={()=>{copyText(phraseModal.phrase);toast.success('Recovery phrase copied!')}}><Copy size={14}/> Copy All Words</button><button className="primary" data-testid="phrase-confirm-button" onClick={()=>{onLogin(phraseModal.user);setPhraseModal(null)}}>I've saved it — Enter vault</button></div></div></div>}
       {forgotModal&&<div className="modal-backdrop"><div className="modal forgot-modal" data-testid="forgot-modal"><button type="button" className="modal-close icon-btn" onClick={()=>{setForgotModal(null);setMode('login')}}><X/></button><p className="eyebrow">PASSWORD RESET</p><h2>Reset Link Ready</h2><p className="muted">Copy this link and open it in your browser. It expires in 1 hour.</p><div className="share-link-box" data-testid="reset-link-display">{forgotModal.link}</div><button className="primary wide" data-testid="copy-reset-link" onClick={()=>{copyText(forgotModal.link);toast.success('Reset link copied to clipboard!')}}><Copy size={15}/> Copy Reset Link</button><p className="reset-note">Configure an email provider to send this automatically.</p></div></div>}
+      <Toaster theme="dark"/>
     </main>
   );
 }
@@ -105,6 +180,18 @@ function Vault({user,onLogout}){
   const [items,setItems]=useState([]); const [query,setQuery]=useState(''); const [showForm,setShowForm]=useState(false); const [editing,setEditing]=useState(null); const [visible,setVisible]=useState({}); const [values,setValues]=useState({}); const [form,setForm]=useState({name:'',value:'',category:'Secret',totp_secret:'',url:'',advance_mode:false,advance_passphrase:''}); const [showGen,setShowGen]=useState(false); const [genOpts,setGenOpts]=useState({length:16,upper:true,lower:true,nums:true,syms:false}); const [genPwd,setGenPwd]=useState(''); const [cat,setCat]=useState('All'); const [shareModal,setShareModal]=useState(null); const [showAudit,setShowAudit]=useState(false); const [auditLogs,setAuditLogs]=useState([]); const [secReport,setSecReport]=useState(null); const [showSec,setShowSec]=useState(false); const [categories,setCategories]=useState(['Login','API key','Secret','Secure note','Wi-Fi','Bank']); const [breachBadge,setBreachBadge]=useState(0); const [breachChecking,setBreachChecking]=useState(false); const [breachScanned,setBreachScanned]=useState(false); const [showSharePicker,setShowSharePicker]=useState(null); const [showAdvancePrompt,setShowAdvancePrompt]=useState(null); const [advanceInput,setAdvanceInput]=useState(''); const [showShares,setShowShares]=useState(false); const [activeShares,setActiveShares]=useState([]); const [phraseGenModal,setPhraseGenModal]=useState(null); const [showSettings,setShowSettings]=useState(false); const [showHelp,setShowHelp]=useState(false); const [settings,setSettings]=useState({autofill:true});
   const [showPinLock,setShowPinLock]=useState(false); const [pinInput,setPinInput]=useState(''); const [pinError,setPinError]=useState(''); const [pinEnabled,setPinEnabled]=useState(!!localStorage.getItem('vault_pin_hash')); const [setupPinMode,setSetupPinMode]=useState(false); const [setupPinValue,setSetupPinValue]=useState(''); const [setupPinConfirm,setSetupPinConfirm]=useState(''); const [setupPinErr,setSetupPinErr]=useState('');
   const [showItemProps,setShowItemProps]=useState(null);
+  // Layer 3, Hardcore, Disclaimer states
+  const [showDisclaimer,setShowDisclaimer]=useState(!user.disclaimer_accepted);
+  const [showTerms,setShowTerms]=useState(false);
+  const [showPrivacy,setShowPrivacy]=useState(false);
+  const [showSecuritySettings,setShowSecuritySettings]=useState(false);
+  const [l3Passwords,setL3Passwords]=useState(null);
+  const [l3Enabled,setL3Enabled]=useState(user.layer3_enabled||false);
+  const [showL3View,setShowL3View]=useState(false);
+  const [showL3Regen,setShowL3Regen]=useState(false);
+  const [l3RegenPwd,setL3RegenPwd]=useState('');
+  const [l3QuizMode,setL3QuizMode]=useState(null); // {indices,answers} for enable quiz
+  const [hardcoreData,setHardcoreData]=useState(null);
 
   // PIN inactivity timer
   useEffect(()=>{
@@ -169,6 +256,37 @@ function Vault({user,onLogout}){
   const exportItem=(item)=>{const data=JSON.stringify({name:item.name,value:values[item.id]||'[reveal before export]',category:item.category},null,2);const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([data],{type:'application/json'}));a.download=`${item.name.replace(/\s+/g,'-')}.json`;a.click()};
   const exportAll=async()=>{if(!window.confirm('This will download ALL your secrets in plain text. Continue?'))return;const full=await Promise.all(items.map(async i=>{const r=await client.get(`/items/${i.id}/value`,authHeader());return {...i,value:r.data.value}}));const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(full,null,2)],{type:'application/json'}));a.download='toppass5-backup.json';a.click();toast.success('Vault backup downloaded')};
   const genPhrase=async()=>{if(!window.confirm('Generate a new 12-word recovery phrase? This replaces any existing phrase.'))return;try{const r=await client.post('/auth/set-phrase',{},authHeader());setPhraseGenModal(r.data.phrase)}catch{toast.error('Could not generate phrase')}};
+
+  // --- Layer 3 & Hardcore helpers ---
+  const loadL3Passwords=async()=>{try{const r=await client.get('/auth/layer3-passwords',authHeader());setL3Passwords(r.data.passwords);setL3Enabled(r.data.enabled);return r.data}catch{toast.error('Could not load Layer 3 data');return null}};
+  const toggleL3=async(enable)=>{
+    if(enable){
+      // Need to quiz before enabling
+      const data=await loadL3Passwords();
+      if(!data)return;
+      const indices=[];while(indices.length<3){const i=Math.floor(Math.random()*20);if(!indices.includes(i))indices.push(i)}
+      indices.sort((a,b)=>a-b);
+      setL3QuizMode({indices,answers:{},passwords:data.passwords});
+    }else{
+      try{await client.post('/auth/toggle-layer3',{enabled:false},authHeader());setL3Enabled(false);toast.success('Layer 3 disabled')}catch(e){toast.error(e.response?.data?.detail||'Failed')}
+    }
+  };
+  const submitL3EnableQuiz=async()=>{
+    if(!l3QuizMode)return;
+    try{
+      await client.post('/auth/toggle-layer3',{enabled:true,quiz_answers:l3QuizMode.answers,quiz_indices:l3QuizMode.indices},authHeader());
+      setL3Enabled(true);setL3QuizMode(null);toast.success('Layer 3 enabled! You will be quizzed on login.');
+    }catch(e){toast.error(e.response?.data?.detail||'Quiz failed — check your answers')}
+  };
+  const regenL3=async()=>{
+    if(!l3RegenPwd){toast.error('Enter your current password');return}
+    try{const r=await client.post('/auth/regenerate-layer3',{password:l3RegenPwd},authHeader());setL3Passwords(r.data.passwords);setShowL3Regen(false);setL3RegenPwd('');setShowL3View(true);toast.success(`New passwords generated! ${r.data.changes_remaining} changes left this week.`)}catch(e){toast.error(e.response?.data?.detail||'Failed to regenerate')}
+  };
+  const loadHardcore=async()=>{try{const r=await client.get('/auth/hardcore-settings',authHeader());setHardcoreData(r.data)}catch{toast.error('Could not load Hardcore settings')}};
+  const saveHardcore=async(newData)=>{
+    try{await client.put('/auth/hardcore-settings',newData,authHeader());setHardcoreData(d=>({...d,enabled:newData.enabled,settings:{max_login_fail_days:newData.max_login_fail_days,max_login_fails:newData.max_login_fails,max_daily_tries:newData.max_daily_tries,max_layer3_fails:newData.max_layer3_fails}}));toast.success(newData.enabled?'Hardcore Mode enabled — be careful!':'Hardcore Mode disabled')}catch(e){toast.error(e.response?.data?.detail||'Failed')}
+  };
+  const acceptDisclaimer=async()=>{try{await client.post('/auth/accept-disclaimer',{},authHeader());setShowDisclaimer(false)}catch{setShowDisclaimer(false)}};
 
   const isItemLocked=(item)=>item.advance_locked_until&&new Date(item.advance_locked_until)>new Date();
   const autoComp=settings.autofill?undefined:'off';
@@ -260,11 +378,90 @@ function Vault({user,onLogout}){
     {/* Backup Phrase Generate */}
     {phraseGenModal&&<div className="modal-backdrop"><div className="modal phrase-reveal-modal" data-testid="phrase-gen-modal"><button type="button" className="modal-close icon-btn" onClick={()=>setPhraseGenModal(null)}><X/></button><p className="eyebrow">CRYPTO BACKUP</p><h2>Your Recovery Phrase</h2><p className="muted phrase-warn">Save these 12 words safely. Use them to log in or reset your password. Shown ONCE.</p><div className="phrase-grid" data-testid="phrase-gen-grid">{phraseGenModal.split(' ').map((w,i)=><div key={i} className="phrase-word"><span className="phrase-num">{i+1}</span><span>{w}</span></div>)}</div><div className="phrase-actions"><button className="secondary" data-testid="copy-gen-phrase-button" onClick={()=>{copyText(phraseGenModal);toast.success('Phrase copied!')}}><Copy size={14}/> Copy All Words</button><button className="primary" onClick={()=>setPhraseGenModal(null)}>Done — I've saved it</button></div></div></div>}
 
-    {/* Settings Modal */}
-    {showSettings&&<div className="modal-backdrop"><div className="modal settings-modal" data-testid="settings-modal"><button type="button" className="modal-close icon-btn" data-testid="close-settings" onClick={()=>setShowSettings(false)}><X/></button><p className="eyebrow">PREFERENCES</p><h2>Settings</h2><div className="settings-list">
-      <div className="settings-row" data-testid="autofill-setting"><div className="settings-info"><b>Browser Autofill</b><p>Allow browser to autofill and suggest saving vault values in forms. Disable on shared computers.</p></div><label className="toggle-switch"><input type="checkbox" checked={settings.autofill} onChange={e=>saveSettingsPref({...settings,autofill:e.target.checked})}/><span className="toggle-slider"/></label></div>
-      <div className="settings-row" data-testid="pin-setting"><div className="settings-info"><b>Vault PIN Lock</b><p>Auto-locks vault after 5 minutes of inactivity. Enter a 4-digit PIN to unlock.</p></div><label className="toggle-switch"><input type="checkbox" checked={pinEnabled} onChange={e=>{if(!e.target.checked){localStorage.removeItem('vault_pin_hash');setPinEnabled(false);setShowPinLock(false);setSetupPinMode(false);if(inactivityRef.current)clearTimeout(inactivityRef.current);toast.success('PIN lock disabled')}else setSetupPinMode(true)}}/><span className="toggle-slider"/></label></div>
+    {/* Settings Modal — Expanded */}
+    {showSettings&&<div className="modal-backdrop"><div className="modal settings-modal" data-testid="settings-modal" style={{maxHeight:'88vh',overflowY:'auto'}}><button type="button" className="modal-close icon-btn" data-testid="close-settings" onClick={()=>setShowSettings(false)}><X/></button><p className="eyebrow">PREFERENCES</p><h2>Settings</h2><div className="settings-list">
+      <div className="settings-row" data-testid="autofill-setting"><div className="settings-info"><b>Browser Autofill</b><p>Allow browser to autofill and suggest saving vault values in forms.</p></div><label className="toggle-switch"><input type="checkbox" checked={settings.autofill} onChange={e=>saveSettingsPref({...settings,autofill:e.target.checked})}/><span className="toggle-slider"/></label></div>
+      <div className="settings-row" data-testid="pin-setting"><div className="settings-info"><b>Vault PIN Lock</b><p>Auto-locks vault after 5 min of inactivity.</p></div><label className="toggle-switch"><input type="checkbox" checked={pinEnabled} onChange={e=>{if(!e.target.checked){localStorage.removeItem('vault_pin_hash');setPinEnabled(false);setShowPinLock(false);setSetupPinMode(false);if(inactivityRef.current)clearTimeout(inactivityRef.current);toast.success('PIN lock disabled')}else setSetupPinMode(true)}}/><span className="toggle-slider"/></label></div>
       {setupPinMode&&<div className="pin-setup-section"><p className="muted" style={{fontSize:'12px',margin:'0 0 10px'}}>Set your 4-digit PIN:</p><div className="pin-setup-row"><input type="password" maxLength="4" inputMode="numeric" data-testid="pin-setup-input" value={setupPinValue} onChange={e=>setSetupPinValue(e.target.value.replace(/\D/g,'').slice(0,4))} placeholder="1234" className="pin-input-field"/><input type="password" maxLength="4" inputMode="numeric" data-testid="pin-confirm-input" value={setupPinConfirm} onChange={e=>setSetupPinConfirm(e.target.value.replace(/\D/g,'').slice(0,4))} placeholder="Confirm" className="pin-input-field"/><button className="primary" data-testid="pin-confirm-btn" onClick={async()=>{if(setupPinValue.length!==4||setupPinValue!==setupPinConfirm){setSetupPinErr('PINs must be 4 digits and match');return}const h=await hashPin(setupPinValue);localStorage.setItem('vault_pin_hash',h);setPinEnabled(true);setSetupPinMode(false);setSetupPinValue('');setSetupPinConfirm('');setSetupPinErr('');toast.success('PIN lock enabled!')}}>Set PIN</button></div>{setupPinErr&&<p style={{color:'var(--red)',fontSize:'12px',marginTop:'6px'}}>{setupPinErr}</p>}</div>}
+      <div className="settings-divider"><span>LAYER 3 — CRYPTO PASSWORDS</span></div>
+      <div className="settings-row" data-testid="l3-toggle-setting"><div className="settings-info"><b>Layer 3 Lock</b><p>Require crypto-password quiz on every login. You must pass a quiz to enable.</p></div><label className="toggle-switch"><input type="checkbox" checked={l3Enabled} onChange={e=>toggleL3(e.target.checked)}/><span className="toggle-slider"/></label></div>
+      <div className="settings-row clickable" data-testid="l3-view-btn" onClick={async()=>{await loadL3Passwords();setShowL3View(true);setShowSettings(false)}}><div className="settings-info"><b>View My 20 Passwords</b><p>See your current Layer 3 crypto passwords.</p></div><ArrowUpRight size={16} style={{color:'var(--muted)',flexShrink:0}}/></div>
+      <div className="settings-row clickable" data-testid="l3-regen-btn" onClick={()=>{setShowL3Regen(true);setShowSettings(false)}}><div className="settings-info"><b>Regenerate Passwords</b><p>Get new random passwords. Max 5 changes per week. Requires password.</p></div><RefreshCw size={16} style={{color:'var(--muted)',flexShrink:0}}/></div>
+      <div className="settings-divider"><span>HARDCORE MODE</span></div>
+      <div className="settings-row clickable" data-testid="hardcore-btn" onClick={async()=>{await loadHardcore();setShowSecuritySettings(true);setShowSettings(false)}}><div className="settings-info"><b><Skull size={14} style={{display:'inline',verticalAlign:'middle',marginRight:'6px'}}/>Hardcore Mode</b><p>Auto-delete account on too many failures. Customize limits.</p></div><ArrowUpRight size={16} style={{color:'var(--red)',flexShrink:0}}/></div>
+      <div className="settings-divider"><span>LEGAL & ACCOUNT</span></div>
+      <div className="settings-row clickable" data-testid="terms-btn" onClick={()=>{setShowTerms(true);setShowSettings(false)}}><div className="settings-info"><b>Terms & Conditions</b></div><FileText size={16} style={{color:'var(--muted)',flexShrink:0}}/></div>
+      <div className="settings-row clickable" data-testid="privacy-btn" onClick={()=>{setShowPrivacy(true);setShowSettings(false)}}><div className="settings-info"><b>Privacy Policy</b></div><FileText size={16} style={{color:'var(--muted)',flexShrink:0}}/></div>
+      <div className="settings-row clickable danger-row" data-testid="logout-settings-btn" onClick={onLogout}><div className="settings-info"><b style={{color:'var(--red)'}}>Log Out</b><p>Sign out of your vault.</p></div><LogOut size={16} style={{color:'var(--red)',flexShrink:0}}/></div>
+    </div></div></div>}
+
+    {/* L3 Quiz to Enable */}
+    {l3QuizMode&&<div className="modal-backdrop"><div className="modal" data-testid="l3-enable-quiz-modal"><button type="button" className="modal-close icon-btn" onClick={()=>setL3QuizMode(null)}><X/></button><p className="eyebrow">LAYER 3 VERIFICATION</p><h2>Prove you know your passwords</h2><p className="muted">Enter the exact passwords for these positions to enable Layer 3.</p>
+      {l3QuizMode.indices.map(idx=><label key={idx}>Pass #{idx+1}<input data-testid={`l3-enable-quiz-${idx}`} type="text" maxLength={5} value={l3QuizMode.answers[String(idx)]||''} onChange={e=>setL3QuizMode(p=>({...p,answers:{...p.answers,[String(idx)]:e.target.value}}))} placeholder="e.g. k8#mQ" autoComplete="off" style={{fontFamily:"'DM Mono',monospace",letterSpacing:'0.15em'}}/></label>)}
+      <button className="primary wide" data-testid="l3-enable-quiz-submit" onClick={submitL3EnableQuiz} disabled={l3QuizMode.indices.some(i=>!(l3QuizMode.answers[String(i)]||'').trim())}><Lock size={15}/> Enable Layer 3</button>
+    </div></div>}
+
+    {/* L3 Passwords View */}
+    {showL3View&&l3Passwords&&<div className="modal-backdrop"><div className="modal l3-view-modal" data-testid="l3-view-modal"><button type="button" className="modal-close icon-btn" onClick={()=>setShowL3View(false)}><X/></button><p className="eyebrow">LAYER 3 — YOUR PASSWORDS</p><h2>20 Crypto Passwords</h2><p className="muted">Keep these safe. You'll be quizzed on random ones during login.</p>
+      <div className="l3-grid" data-testid="l3-view-grid">{l3Passwords.map((p,i)=><div key={i} className="l3-pass-card"><span className="l3-num">{i+1}</span><span className="l3-val">{p}</span></div>)}</div>
+      <button className="secondary wide" style={{marginTop:'12px'}} data-testid="copy-l3-all" onClick={()=>{copyText(l3Passwords.map((p,i)=>`${i+1}: ${p}`).join('\n'));toast.success('All 20 passwords copied!')}}><Copy size={14}/> Copy All</button>
+    </div></div>}
+
+    {/* L3 Regenerate */}
+    {showL3Regen&&<div className="modal-backdrop"><div className="modal" data-testid="l3-regen-modal"><button type="button" className="modal-close icon-btn" onClick={()=>{setShowL3Regen(false);setL3RegenPwd('')}}><X/></button><p className="eyebrow">REGENERATE PASSWORDS</p><h2>New Crypto Passwords</h2><p className="muted">This generates 20 new random passwords. Max 5 changes per week. Layer 3 must be disabled first.</p>
+      <label>Confirm Your Password<input data-testid="l3-regen-pwd" type="password" value={l3RegenPwd} onChange={e=>setL3RegenPwd(e.target.value)} placeholder="Enter your account password"/></label>
+      <button className="primary wide" data-testid="l3-regen-submit" onClick={regenL3} disabled={!l3RegenPwd}><RefreshCw size={15}/> Generate New Passwords</button>
+    </div></div>}
+
+    {/* Hardcore Mode Settings */}
+    {showSecuritySettings&&hardcoreData&&<div className="modal-backdrop"><div className="modal hardcore-modal" data-testid="hardcore-modal"><button type="button" className="modal-close icon-btn" onClick={()=>setShowSecuritySettings(false)}><X/></button><p className="eyebrow">DANGER ZONE</p><h2><Skull size={20}/> Hardcore Mode</h2>
+      <p className="muted" style={{color:'#ff6b74'}}>When enabled, your account and ALL passwords will be PERMANENTLY DELETED if you exceed the failure limits below. This cannot be undone.</p>
+      <div className="settings-row" style={{marginTop:'16px'}}><div className="settings-info"><b>Enable Hardcore Mode</b></div><label className="toggle-switch"><input type="checkbox" checked={hardcoreData.enabled} onChange={e=>{if(e.target.checked&&!window.confirm('Are you sure? This will permanently delete your account if you fail too many times. THIS CANNOT BE UNDONE.'))return;saveHardcore({...hardcoreData.settings,enabled:e.target.checked})}}/><span className="toggle-slider"/></label></div>
+      <div className="hardcore-limits">
+        <label>Max consecutive fail days before deletion<input data-testid="hc-fail-days" type="number" min="1" max="30" value={hardcoreData.settings.max_login_fail_days} onChange={e=>setHardcoreData(d=>({...d,settings:{...d.settings,max_login_fail_days:+e.target.value}}))}/></label>
+        <label>Max total login failures before deletion<input data-testid="hc-total-fails" type="number" min="4" max="100" value={hardcoreData.settings.max_login_fails} onChange={e=>setHardcoreData(d=>({...d,settings:{...d.settings,max_login_fails:+e.target.value}}))}/></label>
+        <label>Max tries per day<input data-testid="hc-daily-tries" type="number" min="1" max="20" value={hardcoreData.settings.max_daily_tries} onChange={e=>setHardcoreData(d=>({...d,settings:{...d.settings,max_daily_tries:+e.target.value}}))}/></label>
+        <label>Max Layer 3 failures before deletion<input data-testid="hc-l3-fails" type="number" min="1" max="50" value={hardcoreData.settings.max_layer3_fails} onChange={e=>setHardcoreData(d=>({...d,settings:{...d.settings,max_layer3_fails:+e.target.value}}))}/></label>
+      </div>
+      <button className="primary wide" data-testid="hc-save-btn" style={{marginTop:'12px'}} onClick={()=>saveHardcore({...hardcoreData.settings,enabled:hardcoreData.enabled})}>Save Hardcore Settings</button>
+      {hardcoreData.failed_logins&&<div className="hc-status" style={{marginTop:'16px',padding:'12px',background:'rgba(255,107,116,.08)',border:'1px solid rgba(255,107,116,.2)',borderRadius:'8px',fontSize:'12px',color:'var(--muted)'}}>
+        <b style={{color:'var(--text)',display:'block',marginBottom:'6px'}}>Current Failure Status</b>
+        <span>Total fails: {hardcoreData.failed_logins.count||0}</span><br/>
+        <span>Consecutive fail days: {hardcoreData.failed_logins.consecutive_days||0}</span><br/>
+        <span>Layer 3 fails: {hardcoreData.failed_logins.layer3_fails||0}</span>
+      </div>}
+    </div></div>}
+
+    {/* Disclaimer Popup */}
+    {showDisclaimer&&<div className="modal-backdrop" style={{zIndex:10}}><div className="modal disclaimer-modal" data-testid="disclaimer-modal">
+      <div style={{textAlign:'center',marginBottom:'16px'}}><AlertTriangle size={40} style={{color:'#fbbf24'}}/></div>
+      <h2 style={{textAlign:'center'}}>Important Disclaimer</h2>
+      <div className="disclaimer-text" data-testid="disclaimer-text">
+        <p>By using TopPass5, you acknowledge and agree to the following:</p>
+        <ul><li>TopPass5 stores your passwords with AES encryption on our servers.</li><li><b>If any password is leaked, we are not responsible.</b></li><li>You are solely responsible for keeping your recovery phrase, birthday, and Layer 3 crypto passwords safe.</li><li>There is NO password recovery mechanism — if you lose your credentials, your vault is permanently inaccessible.</li><li>Hardcore Mode can permanently delete your account. Use at your own risk.</li></ul>
+        <p style={{fontWeight:'600',color:'var(--red)'}}>By clicking "I Understand & Accept", you agree to these terms.</p>
+      </div>
+      <button className="primary wide" data-testid="disclaimer-accept-btn" onClick={acceptDisclaimer} style={{marginTop:'12px'}}><Check size={16}/> I Understand & Accept</button>
+    </div></div>}
+
+    {/* Terms & Conditions */}
+    {showTerms&&<div className="modal-backdrop"><div className="modal legal-modal" data-testid="terms-modal" style={{maxHeight:'88vh',overflowY:'auto'}}><button type="button" className="modal-close icon-btn" onClick={()=>setShowTerms(false)}><X/></button><p className="eyebrow">LEGAL</p><h2>Terms & Conditions</h2><div className="legal-text">
+      <p><b>1. Service Description</b><br/>TopPass5 is a password and secure value management service that provides AES-encrypted storage for sensitive data.</p>
+      <p><b>2. User Responsibilities</b><br/>You are responsible for maintaining the confidentiality of your account credentials, recovery phrase, birthday verification, and Layer 3 crypto passwords. You must not share access credentials with unauthorized parties.</p>
+      <p><b>3. No Liability for Leaks</b><br/>While we implement industry-standard encryption, TopPass5 and its operators assume NO liability for any data breaches, password leaks, or unauthorized access to your stored values. Use at your own risk.</p>
+      <p><b>4. Account Deletion</b><br/>If Hardcore Mode is enabled, your account and all data may be permanently and irreversibly deleted upon exceeding configured failure thresholds. This action cannot be undone.</p>
+      <p><b>5. No Recovery</b><br/>There is no forgot password mechanism for Layer 1 (email/password) or Layer 2 (birthday). Recovery is only possible via your 12-word recovery phrase.</p>
+      <p><b>6. Service Changes</b><br/>We reserve the right to modify, suspend, or discontinue the service at any time without prior notice.</p>
+    </div></div></div>}
+
+    {/* Privacy Policy */}
+    {showPrivacy&&<div className="modal-backdrop"><div className="modal legal-modal" data-testid="privacy-modal" style={{maxHeight:'88vh',overflowY:'auto'}}><button type="button" className="modal-close icon-btn" onClick={()=>setShowPrivacy(false)}><X/></button><p className="eyebrow">LEGAL</p><h2>Privacy Policy</h2><div className="legal-text">
+      <p><b>1. Data Collection</b><br/>We collect your email address, hashed password, hashed birthday, and encrypted vault data. We do not store plaintext passwords or secrets.</p>
+      <p><b>2. Encryption</b><br/>All vault items are encrypted with AES (Fernet) before storage. Birthday and recovery phrases are stored as one-way SHA-256 hashes.</p>
+      <p><b>3. Data Usage</b><br/>Your data is used solely to provide the vault service. We do not sell, share, or monetize your personal information.</p>
+      <p><b>4. Data Retention</b><br/>Data is retained for as long as your account is active. Upon account deletion (manual or via Hardcore Mode), all data is permanently removed.</p>
+      <p><b>5. Security Measures</b><br/>We employ HTTPS, AES encryption, bcrypt password hashing, JWT authentication, and multi-layer verification to protect your data.</p>
+      <p><b>6. Third Parties</b><br/>We may use Google OAuth for authentication. No vault data is shared with third parties.</p>
     </div></div></div>}
 
     {/* Help Modal */}

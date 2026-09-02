@@ -104,3 +104,52 @@
 .help-list{margin:6px 0 0 16px;padding:0;list-style:disc;font-size:13px;color:var(--muted);line-height:1.7}
 .help-list li{margin-bottom:2px}
 .help-section code{background:rgba(255,255,255,.08);padding:2px 6px;border-radius:4px;font-size:11px;font-family:'DM Mono',monospace;color:#a0aec0}
+/* Layer 3 Crypto Passwords */
+.l3-reveal-modal{max-width:600px;max-height:90vh;overflow-y:auto}
+.l3-section{padding:12px 0;border-bottom:1px solid var(--line)}
+.l3-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.l3-pass-card{background:rgba(75,140,255,.06);border:1px solid rgba(75,140,255,.15);border-radius:6px;padding:8px 10px;display:flex;gap:8px;align-items:center}
+.l3-num{color:#3a5070;font:11px 'DM Mono',monospace;min-width:18px}
+.l3-val{font:600 13px 'DM Mono',monospace;color:var(--green);letter-spacing:.08em}
+.l3-view-modal{max-width:560px;max-height:88vh;overflow-y:auto}
+/* Settings dividers & clickable rows */
+.settings-divider{padding:16px 0 8px;border-top:1px solid var(--line);margin-top:8px}
+.settings-divider span{font:500 10px 'DM Mono',monospace;letter-spacing:.16em;color:#5f6b81}
+.settings-row.clickable{cursor:pointer;transition:background .15s}
+.settings-row.clickable:hover{background:rgba(255,255,255,.06)}
+.settings-row.danger-row:hover{background:rgba(255,107,116,.08)}
+/* Hardcore modal */
+.hardcore-modal{max-width:500px}
+.hardcore-limits{display:flex;flex-direction:column;gap:12px;margin-top:16px}
+.hardcore-limits label{font-size:12px;color:#c8cfdd}
+.hardcore-limits input{display:block;width:100%;margin-top:6px;background:#0d1017;border:1px solid var(--line);border-radius:6px;padding:10px;color:var(--text);font:13px 'DM Mono'}
+/* Disclaimer */
+.disclaimer-modal{max-width:520px}
+.disclaimer-text{font-size:13px;color:var(--muted);line-height:1.7}
+.disclaimer-text ul{margin:10px 0 10px 18px;padding:0}
+.disclaimer-text li{margin-bottom:6px}
+/* Legal modals */
+.legal-modal{max-width:560px}
+.legal-text{font-size:13px;color:var(--muted);line-height:1.7}
+.legal-text p{margin:0 0 16px}
+/* Pin setup */
+.pin-setup-section{padding:12px 16px;background:rgba(255,255,255,.03);border:1px solid var(--line);border-radius:8px;margin-top:8px}
+.pin-setup-row{display:flex;gap:8px;align-items:center}
+.pin-input-field{width:80px;background:#0d1017;border:1px solid var(--line);border-radius:6px;padding:10px;color:var(--text);font:14px 'DM Mono';text-align:center}
+/* PIN lock overlay */
+.pin-lock-overlay{position:fixed;inset:0;background:#03050aee;z-index:20;display:flex;align-items:center;justify-content:center}
+.pin-lock-card{text-align:center;max-width:320px}
+.pin-lock-icon{margin:0 auto 16px;width:64px;height:64px;background:rgba(75,140,255,.12);border-radius:50%;display:flex;align-items:center;justify-content:center;color:var(--blue)}
+.pin-dots{display:flex;gap:16px;justify-content:center;margin:24px 0}
+.pin-dot{width:14px;height:14px;border-radius:50%;border:2px solid var(--line);transition:all .15s}
+.pin-dot.filled{background:var(--blue);border-color:var(--blue)}
+.pin-numpad{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;max-width:240px;margin:0 auto}
+.pin-key{width:70px;height:52px;border-radius:10px;background:rgba(255,255,255,.06);border:1px solid var(--line);color:var(--text);font:600 20px var(--sans);cursor:pointer;transition:background .15s}
+.pin-key:hover{background:rgba(255,255,255,.1)}
+.pin-key-empty{opacity:0;cursor:default}
+.pin-error{color:var(--red);font-size:13px;margin-top:12px}
+.pin-forgot{margin-top:16px}
+/* sec-item clickable */
+.sec-item-btn{cursor:pointer;transition:color .15s}.sec-item-btn:hover{color:var(--blue)}
+.share-exp{font:11px 'DM Mono';color:#4a5568}
+@media(max-width:600px){.l3-grid{grid-template-columns:repeat(2,1fr)}}

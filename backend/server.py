@@ -11,7 +11,7 @@ from jose import jwt, JWTError
 from authlib.integrations.starlette_client import OAuth
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-import os, secrets, uuid, hashlib
+import os, secrets, uuid, hashlib, string, json, random
 
 load_dotenv(Path(__file__).parent / '.env')
 client = AsyncIOMotorClient(os.environ['MONGO_URL'])
@@ -24,9 +24,19 @@ _WORDS = "able also area army back ball band bank base bath bear beat bell best 
 def gen_phrase(): return ' '.join(secrets.SystemRandom().sample(_WORDS, 12))
 def hash_phrase(p: str) -> str: return hashlib.sha256(p.strip().lower().encode()).hexdigest()
 
+# --- Layer 3 Crypto Password helpers ---
+_L3_CHARS = string.ascii_letters + string.digits + '!@#$%^&*()-_=+[]{}|;:,.<>?'
+def gen_l3_passwords(count=20, length=5):
+    """Generate `count` random passwords of `length` chars each."""
+    return [''.join(secrets.choice(_L3_CHARS) for _ in range(length)) for _ in range(count)]
+
+def hash_birthday(b: str) -> str:
+    return hashlib.sha256(b.strip().encode()).hexdigest()
+
 class Credentials(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8)
+    birthday: str | None = None  # YYYY-MM-DD, required for register
 class ItemIn(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     value: str = Field(min_length=1, max_length=10000)
@@ -46,15 +56,36 @@ class PhraseResetIn(BaseModel):
     email: EmailStr
     phrase: str
     new_password: str = Field(min_length=8)
+class BirthdayVerify(BaseModel):
+    birthday: str
+class L3QuizAnswer(BaseModel):
+    answers: dict  # {"6": "k8#mQ", "9": "Xp2!z", ...}
+class HardcoreSettings(BaseModel):
+    enabled: bool = False
+    max_login_fail_days: int = Field(default=4, ge=1, le=30)
+    max_login_fails: int = Field(default=16, ge=4, le=100)
+    max_daily_tries: int = Field(default=4, ge=1, le=20)
+    max_layer3_fails: int = Field(default=8, ge=1, le=50)
 
-def token_for(user):
+def token_for(user, stage='full'):
     is_admin = user.get('email','') == os.environ.get('ADMIN_EMAIL','__none__')
-    return jwt.encode({'sub': user['id'], 'email': user['email'], 'name': user.get('name',''), 'is_admin': is_admin, 'exp': datetime.now(timezone.utc) + timedelta(hours=12)}, JWT_SECRET, algorithm='HS256')
-def auth_user(authorization):
+    return jwt.encode({'sub': user['id'], 'email': user['email'], 'name': user.get('name',''), 'is_admin': is_admin, 'stage': stage, 'exp': datetime.now(timezone.utc) + timedelta(hours=12)}, JWT_SECRET, algorithm='HS256')
+def auth_user(authorization, require_full=True):
     if not authorization or not authorization.startswith('Bearer '): raise HTTPException(401, 'Please sign in again')
-    try: return jwt.decode(authorization[7:], JWT_SECRET, algorithms=['HS256'])
+    try:
+        claims = jwt.decode(authorization[7:], JWT_SECRET, algorithms=['HS256'])
+        if require_full and claims.get('stage', 'full') != 'full':
+            raise HTTPException(403, 'Complete all authentication steps first')
+        return claims
     except JWTError: raise HTTPException(401, 'Session expired')
-def public_user(u): return {'id': u['id'], 'email': u['email'], 'name': u.get('name', u['email'].split('@')[0])}
+def public_user(u):
+    return {
+        'id': u['id'], 'email': u['email'], 'name': u.get('name', u['email'].split('@')[0]),
+        'has_birthday': bool(u.get('birthday_hash')),
+        'layer3_enabled': u.get('layer3_enabled', False),
+        'disclaimer_accepted': u.get('disclaimer_accepted', False),
+        'hardcore_enabled': u.get('hardcore_enabled', False),
+    }
 def safe_item(doc):
     return {'id': doc['id'], 'name': doc['name'], 'category': doc.get('category','Secret'), 'url': doc.get('url',''), 'advance_mode': doc.get('advance_mode', False), 'advance_locked_until': doc.get('advance_locked_until'), 'created_at': doc['created_at'], 'updated_at': doc['updated_at'], 'has_totp': bool(doc.get('totp_enc'))}
 async def log_event(user_id: str, action: str, detail: str = ''):
@@ -66,16 +97,240 @@ async def root(): return {'message': 'CryptonVault API'}
 @router.post('/auth/register')
 async def register(data: Credentials):
     if await db.users.find_one({'email': data.email.lower()}): raise HTTPException(409, 'An account already exists')
+    if not data.birthday: raise HTTPException(400, 'Birthday is required')
     phrase = gen_phrase()
-    user = {'id': str(uuid.uuid4()), 'email': data.email.lower(), 'password': pwd.hash(data.password), 'name': data.email.split('@')[0], 'phrase_hash': hash_phrase(phrase), 'created_at': datetime.now(timezone.utc).isoformat()}
+    l3_passwords = gen_l3_passwords(20, 5)
+    user = {
+        'id': str(uuid.uuid4()), 'email': data.email.lower(), 'password': pwd.hash(data.password),
+        'name': data.email.split('@')[0], 'phrase_hash': hash_phrase(phrase),
+        'birthday_hash': hash_birthday(data.birthday),
+        'layer3_enabled': False,
+        'layer3_passwords_enc': fernet.encrypt(json.dumps(l3_passwords).encode()).decode(),
+        'layer3_change_count': 0,
+        'layer3_change_week_start': datetime.now(timezone.utc).isoformat(),
+        'disclaimer_accepted': False,
+        'hardcore_enabled': False,
+        'hardcore_settings': {'max_login_fail_days': 4, 'max_login_fails': 16, 'max_daily_tries': 4, 'max_layer3_fails': 8},
+        'failed_logins': {'count': 0, 'daily_count': 0, 'last_fail_date': None, 'consecutive_days': 0, 'layer3_fails': 0},
+        'created_at': datetime.now(timezone.utc).isoformat()
+    }
     await db.users.insert_one(user)
-    return {'token': token_for(user), 'user': public_user(user), 'phrase': phrase}
+    return {'token': token_for(user), 'user': public_user(user), 'phrase': phrase, 'layer3_passwords': l3_passwords}
 
 @router.post('/auth/login')
 async def login(data: Credentials):
     user = await db.users.find_one({'email': data.email.lower()}, {'_id': 0})
-    if not user or not user.get('password') or not pwd.verify(data.password, user['password']): raise HTTPException(401, 'Email or password is incorrect')
-    await db.users.update_one({'id':user['id']},{'$set':{'last_seen':datetime.now(timezone.utc).isoformat()}}); await log_event(user['id'],'LOGIN',data.email.lower()); return {'token': token_for(user), 'user': public_user(user)}
+    if not user or not user.get('password'):
+        raise HTTPException(401, 'Email or password is incorrect')
+    # --- Hardcore mode: check if account should be deleted ---
+    if user.get('hardcore_enabled'):
+        fl = user.get('failed_logins', {})
+        hs = user.get('hardcore_settings', {})
+        if fl.get('count', 0) >= hs.get('max_login_fails', 16) or fl.get('consecutive_days', 0) >= hs.get('max_login_fail_days', 4):
+            await db.items.delete_many({'user_id': user['id']})
+            await db.users.delete_one({'id': user['id']})
+            await log_event(user['id'], 'HARDCORE_DELETE', 'Account auto-deleted due to failed login limits')
+            raise HTTPException(410, 'Account permanently deleted — too many failed login attempts (Hardcore Mode).')
+        # Daily limit check
+        today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+        if fl.get('last_fail_date') == today and fl.get('daily_count', 0) >= hs.get('max_daily_tries', 4):
+            raise HTTPException(429, f'Daily login limit reached ({hs.get("max_daily_tries", 4)} tries). Try again tomorrow.')
+    # --- Verify password ---
+    if not pwd.verify(data.password, user['password']):
+        await _track_login_fail(user)
+        raise HTTPException(401, 'Email or password is incorrect')
+    # Password correct - check if birthday verification needed
+    has_birthday = bool(user.get('birthday_hash'))
+    has_l3 = user.get('layer3_enabled', False)
+    if has_birthday:
+        # Return stage token - user must verify birthday next
+        stage_token = token_for(user, stage='birthday')
+        await log_event(user['id'], 'LOGIN_STAGE1', data.email.lower())
+        return {'stage': 'birthday', 'token': stage_token, 'user': public_user(user), 'needs_birthday': True, 'needs_layer3': has_l3}
+    # No birthday set (legacy user) - grant full access
+    await _reset_login_fails(user)
+    await db.users.update_one({'id': user['id']}, {'$set': {'last_seen': datetime.now(timezone.utc).isoformat()}})
+    await log_event(user['id'], 'LOGIN', data.email.lower())
+    return {'stage': 'complete', 'token': token_for(user), 'user': public_user(user)}
+
+async def _track_login_fail(user):
+    fl = user.get('failed_logins', {'count': 0, 'daily_count': 0, 'last_fail_date': None, 'consecutive_days': 0, 'layer3_fails': 0})
+    today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    if fl.get('last_fail_date') == today:
+        fl['daily_count'] = fl.get('daily_count', 0) + 1
+    else:
+        if fl.get('last_fail_date'):
+            yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime('%Y-%m-%d')
+            if fl['last_fail_date'] == yesterday:
+                fl['consecutive_days'] = fl.get('consecutive_days', 0) + 1
+            else:
+                fl['consecutive_days'] = 1
+        else:
+            fl['consecutive_days'] = 1
+        fl['daily_count'] = 1
+        fl['last_fail_date'] = today
+    fl['count'] = fl.get('count', 0) + 1
+    await db.users.update_one({'id': user['id']}, {'$set': {'failed_logins': fl}})
+    await log_event(user['id'], 'LOGIN_FAIL', f"count={fl['count']}, days={fl['consecutive_days']}")
+
+async def _reset_login_fails(user):
+    await db.users.update_one({'id': user['id']}, {'$set': {'failed_logins': {'count': 0, 'daily_count': 0, 'last_fail_date': None, 'consecutive_days': 0, 'layer3_fails': user.get('failed_logins', {}).get('layer3_fails', 0)}}})
+
+@router.post('/auth/verify-birthday')
+async def verify_birthday(data: BirthdayVerify, authorization: str | None = Header(default=None)):
+    claims = auth_user(authorization, require_full=False)
+    user = await db.users.find_one({'id': claims['sub']}, {'_id': 0})
+    if not user: raise HTTPException(404, 'User not found')
+    if hash_birthday(data.birthday) != user.get('birthday_hash'):
+        await _track_login_fail(user)
+        raise HTTPException(401, 'Birthday verification failed')
+    has_l3 = user.get('layer3_enabled', False)
+    if has_l3:
+        # Need L3 quiz next
+        quiz_indices = sorted(random.sample(range(20), 3))
+        stage_token = token_for(user, stage='layer3')
+        await db.users.update_one({'id': user['id']}, {'$set': {'pending_quiz': quiz_indices}})
+        await log_event(user['id'], 'BIRTHDAY_VERIFIED', user['email'])
+        return {'stage': 'layer3', 'token': stage_token, 'quiz_indices': quiz_indices}
+    # Birthday verified, no L3 - grant full access
+    await _reset_login_fails(user)
+    await db.users.update_one({'id': user['id']}, {'$set': {'last_seen': datetime.now(timezone.utc).isoformat()}})
+    await log_event(user['id'], 'LOGIN', user['email'])
+    return {'stage': 'complete', 'token': token_for(user), 'user': public_user(user)}
+
+@router.post('/auth/verify-layer3')
+async def verify_layer3(data: L3QuizAnswer, authorization: str | None = Header(default=None)):
+    claims = auth_user(authorization, require_full=False)
+    user = await db.users.find_one({'id': claims['sub']}, {'_id': 0})
+    if not user: raise HTTPException(404, 'User not found')
+    if not user.get('layer3_passwords_enc'): raise HTTPException(400, 'Layer 3 not set up')
+    passwords = json.loads(fernet.decrypt(user['layer3_passwords_enc'].encode()).decode())
+    quiz_indices = user.get('pending_quiz', [])
+    # Verify each answer
+    for idx_str, answer in data.answers.items():
+        idx = int(idx_str)
+        if idx < 0 or idx >= len(passwords) or passwords[idx] != answer:
+            # Track L3 failure
+            fl = user.get('failed_logins', {})
+            fl['layer3_fails'] = fl.get('layer3_fails', 0) + 1
+            await db.users.update_one({'id': user['id']}, {'$set': {'failed_logins': fl}})
+            # Hardcore: check L3 fail limit
+            if user.get('hardcore_enabled'):
+                hs = user.get('hardcore_settings', {})
+                if fl['layer3_fails'] >= hs.get('max_layer3_fails', 8):
+                    await db.items.delete_many({'user_id': user['id']})
+                    await db.users.delete_one({'id': user['id']})
+                    await log_event(user['id'], 'HARDCORE_DELETE', 'Account deleted: Layer 3 fail limit exceeded')
+                    raise HTTPException(410, 'Account permanently deleted — too many Layer 3 failures (Hardcore Mode).')
+            await log_event(user['id'], 'L3_FAIL', f"fails={fl['layer3_fails']}")
+            raise HTTPException(401, f'Layer 3 verification failed. Wrong answer for pass {idx + 1}.')
+    # All correct - grant full access
+    await _reset_login_fails(user)
+    await db.users.update_one({'id': user['id']}, {'$set': {'last_seen': datetime.now(timezone.utc).isoformat(), 'failed_logins.layer3_fails': 0, 'pending_quiz': []}})
+    await log_event(user['id'], 'LOGIN', user['email'])
+    return {'stage': 'complete', 'token': token_for(user), 'user': public_user(user)}
+
+@router.post('/auth/accept-disclaimer')
+async def accept_disclaimer(authorization: str | None = Header(default=None)):
+    claims = auth_user(authorization)
+    await db.users.update_one({'id': claims['sub']}, {'$set': {'disclaimer_accepted': True}})
+    return {'ok': True}
+
+@router.get('/auth/layer3-passwords')
+async def get_layer3_passwords(authorization: str | None = Header(default=None)):
+    claims = auth_user(authorization)
+    user = await db.users.find_one({'id': claims['sub']}, {'_id': 0})
+    if not user: raise HTTPException(404, 'User not found')
+    if not user.get('layer3_passwords_enc'):
+        # Legacy user: generate L3 passwords on first access
+        l3_passwords = gen_l3_passwords(20, 5)
+        await db.users.update_one({'id': claims['sub']}, {'$set': {
+            'layer3_passwords_enc': fernet.encrypt(json.dumps(l3_passwords).encode()).decode(),
+            'layer3_enabled': False,
+            'layer3_change_count': 0,
+            'layer3_change_week_start': datetime.now(timezone.utc).isoformat(),
+        }})
+        return {'passwords': l3_passwords, 'enabled': False, 'first_time': True}
+    passwords = json.loads(fernet.decrypt(user['layer3_passwords_enc'].encode()).decode())
+    return {'passwords': passwords, 'enabled': user.get('layer3_enabled', False)}
+
+@router.post('/auth/toggle-layer3')
+async def toggle_layer3(data: dict, authorization: str | None = Header(default=None)):
+    claims = auth_user(authorization)
+    user = await db.users.find_one({'id': claims['sub']}, {'_id': 0})
+    if not user: raise HTTPException(404, 'User not found')
+    enable = data.get('enabled', False)
+    if enable:
+        # Must pass quiz to enable (lock)
+        if not user.get('layer3_passwords_enc'): raise HTTPException(400, 'Generate Layer 3 passwords first')
+        quiz_answers = data.get('quiz_answers', {})
+        quiz_indices = data.get('quiz_indices', [])
+        if not quiz_answers or not quiz_indices:
+            raise HTTPException(400, 'Must pass quiz to enable Layer 3')
+        passwords = json.loads(fernet.decrypt(user['layer3_passwords_enc'].encode()).decode())
+        for idx_str, answer in quiz_answers.items():
+            idx = int(idx_str)
+            if idx < 0 or idx >= len(passwords) or passwords[idx] != answer:
+                raise HTTPException(401, f'Wrong answer for pass {idx + 1}. Cannot enable Layer 3.')
+    await db.users.update_one({'id': claims['sub']}, {'$set': {'layer3_enabled': enable}})
+    await log_event(claims['sub'], 'L3_TOGGLE', f"enabled={enable}")
+    return {'ok': True, 'enabled': enable}
+
+@router.post('/auth/regenerate-layer3')
+async def regenerate_layer3(data: dict, authorization: str | None = Header(default=None)):
+    claims = auth_user(authorization)
+    user = await db.users.find_one({'id': claims['sub']}, {'_id': 0})
+    if not user: raise HTTPException(404, 'User not found')
+    if user.get('layer3_enabled'): raise HTTPException(400, 'Disable Layer 3 before regenerating passwords')
+    # Check weekly limit (5 changes per week)
+    week_start = user.get('layer3_change_week_start')
+    change_count = user.get('layer3_change_count', 0)
+    now = datetime.now(timezone.utc)
+    if week_start:
+        ws = datetime.fromisoformat(week_start).replace(tzinfo=timezone.utc) if '+' not in str(week_start) else datetime.fromisoformat(week_start)
+        if (now - ws).days < 7:
+            if change_count >= 5:
+                raise HTTPException(429, 'You can only change Layer 3 passwords 5 times per week. Try again later.')
+        else:
+            change_count = 0
+            week_start = now.isoformat()
+    else:
+        week_start = now.isoformat()
+    # Verify current password for safety
+    if not data.get('password'): raise HTTPException(400, 'Current password required')
+    if not pwd.verify(data['password'], user['password']): raise HTTPException(401, 'Wrong password')
+    new_passwords = gen_l3_passwords(20, 5)
+    await db.users.update_one({'id': claims['sub']}, {'$set': {
+        'layer3_passwords_enc': fernet.encrypt(json.dumps(new_passwords).encode()).decode(),
+        'layer3_change_count': change_count + 1,
+        'layer3_change_week_start': week_start,
+    }})
+    await log_event(claims['sub'], 'L3_REGEN', f"change #{change_count + 1} this week")
+    return {'passwords': new_passwords, 'changes_remaining': 4 - change_count}
+
+@router.get('/auth/hardcore-settings')
+async def get_hardcore_settings(authorization: str | None = Header(default=None)):
+    claims = auth_user(authorization)
+    user = await db.users.find_one({'id': claims['sub']}, {'_id': 0})
+    if not user: raise HTTPException(404, 'User not found')
+    return {
+        'enabled': user.get('hardcore_enabled', False),
+        'settings': user.get('hardcore_settings', {'max_login_fail_days': 4, 'max_login_fails': 16, 'max_daily_tries': 4, 'max_layer3_fails': 8}),
+        'failed_logins': user.get('failed_logins', {'count': 0, 'daily_count': 0, 'consecutive_days': 0, 'layer3_fails': 0}),
+    }
+
+@router.put('/auth/hardcore-settings')
+async def update_hardcore_settings(data: HardcoreSettings, authorization: str | None = Header(default=None)):
+    claims = auth_user(authorization)
+    user = await db.users.find_one({'id': claims['sub']}, {'_id': 0})
+    if not user: raise HTTPException(404, 'User not found')
+    # Verify password for safety
+    await db.users.update_one({'id': claims['sub']}, {'$set': {
+        'hardcore_enabled': data.enabled,
+        'hardcore_settings': {'max_login_fail_days': data.max_login_fail_days, 'max_login_fails': data.max_login_fails, 'max_daily_tries': data.max_daily_tries, 'max_layer3_fails': data.max_layer3_fails}
+    }})
+    await log_event(claims['sub'], 'HARDCORE_UPDATE', f"enabled={data.enabled}")
+    return {'ok': True}
 
 @router.post('/auth/phrase-login')
 async def phrase_login(data: PhraseIn):
