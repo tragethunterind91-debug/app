@@ -31,7 +31,7 @@ Build a website for saving passwords/values with tight security (TopPass5). User
 
 ## What's Been Implemented
 - Landing page with hero, features, security messaging
-- 6-second enhanced loading screen
+- 6-second enhanced loading screen (14s animated)
 - Multi-layer auth (L1, L2 birthday, L3 crypto type pass)
 - AES-encrypted vault CRUD, password generator, import/export
 - Search & categories, TOTP, security dashboard, advance mode
@@ -41,6 +41,13 @@ Build a website for saving passwords/values with tight security (TopPass5). User
 - Birthday warning text on register/login forms
 - Login attempts display for hardcore mode
 - Export L3 passwords as text file
+- Share links with live countdown timer
+- L3 crypto password one-time view policy (viewed once then blocked, export always available)
+- Admin birthday set (birthday: 2000-01-01) - login now asks birthday for admin
+- Auto-suggest strong password when creating new vault items
+- Smart Fill button for items with URLs (copies password + opens website)
+- Browser Credential Management API integration (saves login to browser's password manager)
+- Prominent "Share" labeled button on vault items
 
 ## Backlog
 - P1: Google Ad Manager tags (waiting for user code)

@@ -85,6 +85,7 @@ def public_user(u):
         'layer3_enabled': u.get('layer3_enabled', False),
         'disclaimer_enabled': u.get('disclaimer_enabled', False),
         'hardcore_enabled': u.get('hardcore_enabled', False),
+        'l3_viewed': u.get('l3_viewed', False),
     }
 def safe_item(doc):
     return {'id': doc['id'], 'name': doc['name'], 'category': doc.get('category','Secret'), 'url': doc.get('url',''), 'advance_mode': doc.get('advance_mode', False), 'advance_locked_until': doc.get('advance_locked_until'), 'created_at': doc['created_at'], 'updated_at': doc['updated_at'], 'has_totp': bool(doc.get('totp_enc'))}
@@ -114,7 +115,7 @@ async def register(data: Credentials):
         'created_at': datetime.now(timezone.utc).isoformat()
     }
     await db.users.insert_one(user)
-    return {'token': token_for(user), 'user': public_user(user), 'layer3_passwords': l3_passwords}
+    return {'token': token_for(user), 'user': public_user(user)}
 
 @router.post('/auth/login')
 async def login(data: Credentials):
@@ -267,7 +268,7 @@ async def get_login_status(email: str):
     }
 
 @router.get('/auth/layer3-passwords')
-async def get_layer3_passwords(authorization: str | None = Header(default=None)):
+async def get_layer3_passwords(authorization: str | None = Header(default=None), for_export: bool = False):
     claims = auth_user(authorization)
     user = await db.users.find_one({'id': claims['sub']}, {'_id': 0})
     if not user: raise HTTPException(404, 'User not found')
@@ -279,10 +280,18 @@ async def get_layer3_passwords(authorization: str | None = Header(default=None))
             'layer3_enabled': False,
             'layer3_change_count': 0,
             'layer3_change_week_start': datetime.now(timezone.utc).isoformat(),
+            'l3_viewed': False,
         }})
-        return {'passwords': l3_passwords, 'enabled': False, 'first_time': True}
+        user = await db.users.find_one({'id': claims['sub']}, {'_id': 0})
+    # One-time view policy: passwords can only be viewed once on-screen
+    # for_export=True bypasses this restriction (export to file is always allowed)
+    if not for_export and user.get('l3_viewed', False):
+        raise HTTPException(403, 'Passwords already viewed once. Export them to file, or regenerate to get a new set.')
     passwords = json.loads(fernet.decrypt(user['layer3_passwords_enc'].encode()).decode())
-    return {'passwords': passwords, 'enabled': user.get('layer3_enabled', False)}
+    if not for_export:
+        # Mark as viewed after returning
+        await db.users.update_one({'id': claims['sub']}, {'$set': {'l3_viewed': True}})
+    return {'passwords': passwords, 'enabled': user.get('layer3_enabled', False), 'l3_viewed': user.get('l3_viewed', False)}
 
 @router.post('/auth/toggle-layer3')
 async def toggle_layer3(data: dict, authorization: str | None = Header(default=None)):
@@ -334,6 +343,7 @@ async def regenerate_layer3(data: dict, authorization: str | None = Header(defau
         'layer3_passwords_enc': fernet.encrypt(json.dumps(new_passwords).encode()).decode(),
         'layer3_change_count': change_count + 1,
         'layer3_change_month_start': month_start,
+        'l3_viewed': False,  # Reset one-time view flag on regeneration
     }})
     await log_event(claims['sub'], 'L3_REGEN', f"change #{change_count + 1} this month")
     return {'passwords': new_passwords, 'changes_remaining': 2 - change_count}
@@ -385,6 +395,7 @@ async def create_item(data: ItemIn, authorization: str | None = Header(default=N
 async def reveal_item(item_id: str, authorization: str | None = Header(default=None)):
     user = auth_user(authorization); doc = await db.items.find_one({'id':item_id, 'user_id':user['sub']}, {'_id':0})
     if not doc: raise HTTPException(404, 'Item not found')
+    if doc.get('advance_mode'): raise HTTPException(403, 'This item is protected by Advance Mode. Use the passphrase-verified endpoint instead.')
     await log_event(user['sub'],'REVEAL',doc['name']); return {'id': item_id, 'value': fernet.decrypt(doc['secret'].encode()).decode()}
 
 @router.put('/items/{item_id}')
@@ -554,8 +565,35 @@ async def reset_password(data: dict):
 app=FastAPI(title='TopPass5 API'); app.include_router(router); app.add_middleware(SessionMiddleware, secret_key=JWT_SECRET, same_site='lax', https_only=True); app.add_middleware(CORSMiddleware, allow_credentials=True, allow_origins=os.environ.get('CORS_ORIGINS','*').split(','), allow_methods=['*'], allow_headers=['*'])
 @app.on_event('startup')
 async def seed_admin():
-    admin_email=os.environ.get('ADMIN_EMAIL',''); admin_pass=os.environ.get('ADMIN_PASS','')
-    if admin_email and admin_pass and not await db.users.find_one({'email':admin_email}):
-        await db.users.insert_one({'id':str(uuid.uuid4()),'email':admin_email,'password':pwd.hash(admin_pass),'name':'TopPass5 Owner','google':False,'created_at':datetime.now(timezone.utc).isoformat()})
+    admin_email=os.environ.get('ADMIN_EMAIL',''); admin_pass=os.environ.get('ADMIN_PASS',''); admin_birthday=os.environ.get('ADMIN_BIRTHDAY','')
+    if admin_email and admin_pass:
+        existing = await db.users.find_one({'email': admin_email})
+        if not existing:
+            l3_passwords = gen_l3_passwords(20, 5)
+            await db.users.insert_one({
+                'id': str(uuid.uuid4()), 'email': admin_email, 'password': pwd.hash(admin_pass),
+                'name': 'TopPass5 Owner', 'google': False,
+                'birthday_hash': hash_birthday(admin_birthday) if admin_birthday else None,
+                'layer3_enabled': False,
+                'layer3_passwords_enc': fernet.encrypt(json.dumps(l3_passwords).encode()).decode(),
+                'layer3_change_count': 0, 'layer3_change_month_start': datetime.now(timezone.utc).isoformat(),
+                'disclaimer_enabled': False, 'hardcore_enabled': False, 'l3_viewed': False,
+                'hardcore_settings': {'max_login_fail_days': 4, 'max_login_fails': 16, 'max_daily_tries': 4, 'max_layer3_fails': 8},
+                'failed_logins': {'count': 0, 'daily_count': 0, 'last_fail_date': None, 'consecutive_days': 0, 'layer3_fails': 0},
+                'created_at': datetime.now(timezone.utc).isoformat()
+            })
+        else:
+            # Update existing admin: add birthday if missing and set correct fields
+            updates = {}
+            if admin_birthday and not existing.get('birthday_hash'):
+                updates['birthday_hash'] = hash_birthday(admin_birthday)
+            if not existing.get('layer3_passwords_enc'):
+                l3_passwords = gen_l3_passwords(20, 5)
+                updates['layer3_passwords_enc'] = fernet.encrypt(json.dumps(l3_passwords).encode()).decode()
+                updates['layer3_enabled'] = False
+                updates['layer3_change_count'] = 0
+                updates['l3_viewed'] = False
+            if updates:
+                await db.users.update_one({'email': admin_email}, {'$set': updates})
 @app.on_event('shutdown')
 async def shutdown(): client.close()
