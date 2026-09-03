@@ -62,6 +62,12 @@ Build a website for saving passwords/values with tight security (TopPass5). User
 - Crypto Type Pass one-time API view enforced; export remains available
 - Advance Mode hardened across reveal, edit, delete, TOTP, share, and bulk-delete paths
 - Hardcore Mode fixed so configured failure limits trigger account/vault deletion immediately instead of being blocked by normal temporary lockout
+- Public website contact section added with official ZNQ Telegram, support/partners email, and X links, plus matching footer links
+
+## Latest Verification — 2026-09-03 Contact Links
+- `python -m py_compile backend/server.py` passed
+- `yarn build` passed with existing React hook dependency warnings in `App.js`
+- Playwright UI smoke test passed on preview: contact section renders and Telegram, email, X, and footer links point to the requested destinations
 
 ## Latest Verification — 2026-09-03 Security Hardening
 - `python -m py_compile backend/server.py` passed

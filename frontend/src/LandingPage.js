@@ -1,11 +1,16 @@
 import {useEffect, useRef, useState} from 'react';
 import {motion, useInView} from 'framer-motion';
-import {ShieldCheck, Lock, Shield, KeyRound, Skull, EyeOff, ShieldAlert, ArrowUpRight, ArrowRight, Check, X as XIcon, ChevronDown, Sparkles, Zap, Fingerprint, ScrollText} from 'lucide-react';
+import {ShieldCheck, Lock, Shield, KeyRound, Skull, EyeOff, ShieldAlert, ArrowUpRight, ArrowRight, Check, X as XIcon, ChevronDown, Sparkles, Zap, Fingerprint, ScrollText, Send, Mail, RadioTower} from 'lucide-react';
 import {Accordion, AccordionItem, AccordionTrigger, AccordionContent} from './components/ui/accordion';
 import './LandingPage.css';
 
 const fadeUp={hidden:{opacity:0,y:32},visible:{opacity:1,y:0,transition:{duration:.7,ease:[0.16,1,0.3,1]}}};
 const stagger={hidden:{},visible:{transition:{staggerChildren:.12}}};
+const contactLinks=[
+  {label:'Telegram Channel',value:'t.me/znqnetworkglob',href:'https://t.me/znqnetworkglob',icon:Send,testId:'contact-telegram-link'},
+  {label:'Support / Partners',value:'znqnetworkglobsupport@gmail.com',href:'mailto:znqnetworkglobsupport@gmail.com',icon:Mail,testId:'contact-email-link'},
+  {label:'X Network',value:'@ZNQNETWORKGLOB',href:'https://x.com/ZNQNETWORKGLOB',icon:RadioTower,testId:'contact-x-link'},
+];
 
 function Reveal({children,className,delay=0}){
   return <motion.div className={className} initial="hidden" whileInView="visible" viewport={{once:true,margin:'-80px'}}
@@ -201,6 +206,26 @@ function CTASection({onGetStarted}){
   );
 }
 
+function ContactSection(){
+  return (
+    <section className="tp5-contact" data-testid="contact-section">
+      <Reveal className="tp5-contact-inner">
+        <div>
+          <p className="tp5-eyebrow"><RadioTower size={12}/> ZNQ NETWORK GLOBAL</p>
+          <h2>Official channels</h2>
+          <p>Support, partnerships, collaborations, updates, and network announcements.</p>
+        </div>
+        <div className="tp5-contact-links">
+          {contactLinks.map(link=>{
+            const Icon=link.icon;
+            return <a key={link.href} className="tp5-contact-card" data-testid={link.testId} href={link.href} target={link.href.startsWith('mailto:')?undefined:'_blank'} rel={link.href.startsWith('mailto:')?undefined:'noreferrer'}><Icon size={18}/><span><b>{link.label}</b><small>{link.value}</small></span><ArrowUpRight size={15}/></a>;
+          })}
+        </div>
+      </Reveal>
+    </section>
+  );
+}
+
 function Footer(){
   return (
     <footer className="tp5-footer">
@@ -209,7 +234,7 @@ function Footer(){
         <div className="tp5-footer-cols">
           <div><h4>Product</h4><span>Vault</span><span>Advance Mode</span><span>Hardcore Mode</span></div>
           <div><h4>Security</h4><span>AES-256</span><span>Zero-Knowledge</span><span>Crypto Type Pass</span></div>
-          <div><h4>Company</h4><span>ZNQ Network</span></div>
+          <div><h4>Company</h4><span>ZNQ Network</span><a data-testid="footer-telegram-link" href="https://t.me/znqnetworkglob" target="_blank" rel="noreferrer">Telegram</a><a data-testid="footer-email-link" href="mailto:znqnetworkglobsupport@gmail.com">Support Email</a><a data-testid="footer-x-link" href="https://x.com/ZNQNETWORKGLOB" target="_blank" rel="noreferrer">X / Twitter</a></div>
         </div>
       </div>
       <div className="tp5-footer-bottom"><img src="https://img.sanishtech.com/u/7ad9ec964e6da7120bb20b71fd4cbcb3.png" alt="ZNQ" className="tp5-znq-logo"/><span>by ZNQ NETWORK — Your secrets. Only yours.</span></div>
@@ -236,6 +261,7 @@ export default function LandingPage({onGetStarted}){
       <ComparisonSection/>
       <FAQSection/>
       <CTASection onGetStarted={onGetStarted}/>
+      <ContactSection/>
       <Footer/>
     </div>
   );
