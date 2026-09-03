@@ -1,41 +1,145 @@
 {
-  "project_name": "CryptonVault - Ultra-Secure Password & Secrets Manager",
-  "app_type": "saas_app",
   "theme": "dark",
-  "emotional_tone": "uncompromising security, elite precision, and calm control",
-  "color_palette": {
-    "archetype": "LUXURY & CYBER-INFRASTRUCTURE",
-    "primary": "#3B82F6",
-    "primary_hover": "#2563EB",
-    "background_dark": "#090A0F",
-    "surface_dark": "#121520",
-    "surface_card": "#171B2A",
-    "border_subtle": "rgba(255, 255, 255, 0.08)",
-    "text_main": "#F8FAFC",
-    "text_muted": "#94A3B8",
-    "accent_glow": "rgba(59, 130, 246, 0.15)",
-    "success": "#10B981",
-    "warning": "#F59E0B",
-    "danger": "#EF4444"
-  },
+  "archetype": "THE PERFORMANCE PRO / ELECTRIC SECURITY VAULT",
   "typography": {
-    "heading_font": "Outfit, sans-serif",
-    "body_font": "Inter, sans-serif",
-    "mono_font": "JetBrains Mono, monospace"
+    "heading_font": "Unbounded, Clash Display, sans-serif",
+    "body_font": "Inter, -apple-system, BlinkMacSystemFont, sans-serif",
+    "mono_font": "JetBrains Mono, Roboto Mono, monospace",
+    "hierarchy": {
+      "h1": "text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight leading-tight",
+      "h2": "text-2xl sm:text-3xl lg:text-4xl font-semibold tracking-tight",
+      "h3": "text-xl sm:text-2xl font-semibold tracking-normal",
+      "h4": "text-lg sm:text-xl font-medium",
+      "body": "text-base text-slate-300 leading-relaxed",
+      "small_label": "text-xs uppercase tracking-[0.2em] font-mono text-cyan-400/90"
+    },
+    "rules": [
+      "DO NOT use Inter for main headings; use Unbounded or Clash Display font.",
+      "All overlines and security badges must use JetBrains Mono in uppercase with tracking-[0.2em].",
+      "Maximum heading text size is text-6xl (3.75rem)."
+    ]
   },
-  "key_features": [
-    "Email/Password and Google OAuth authentication",
-    "Master Password verification and Zero-Knowledge local encryption simulation for vault items",
-    "Secure Vault Item Management (Passwords, API Keys, Secure Notes, Credit Cards, Custom Values)",
-    "Client-side search, filtering by category (Login, Secure Note, API Key, Card), and favorite items",
-    "Password Generator with entropy score, symbols, and length controls",
-    "Vault Security Health Audit (Weak, Reused, Expired passwords & breach simulation)",
-    "Secure Encrypted Item Sharing with custom expiry & password protection",
-    "Emergency Account Recovery Flow (Recovery Kit PDF download & secret backup codes)",
-    "Export Vault Data (JSON or Encrypted file download) and Single Item export/copy",
-    "Activity Log & Security Audit Trail"
+  "colors": {
+    "background": {
+      "primary": "#030712",
+      "secondary": "#0b0f19",
+      "card": "#111827",
+      "elevated": "#1f2937"
+    },
+    "text": {
+      "primary": "#f9fafb",
+      "secondary": "#9ca3af",
+      "muted": "#6b7280",
+      "accent": "#22d3ee"
+    },
+    "brand_accents": {
+      "primary": "#06b6d4",
+      "primary_hover": "#0891b2",
+      "secondary": "#a855f7",
+      "danger": "#ef4444",
+      "danger_hover": "#dc2626",
+      "success": "#10b981",
+      "warning": "#f59e0b"
+    },
+    "borders": {
+      "subtle": "rgba(255, 255, 255, 0.08)",
+      "active": "rgba(6, 182, 212, 0.5)",
+      "danger": "rgba(239, 68, 68, 0.6)"
+    },
+    "forbidden_colors": [
+      "#7351B7",
+      "#1B93A4"
+    ]
+  },
+  "visual_enhancers": {
+    "glassmorphism": "backdrop-blur-xl bg-slate-950/70 border border-white/10 shadow-[0_8px_32px_rgba(0,0,0,0.4)]",
+    "tracing_beam": "Relative border glow with Cyan/Violet moving ambient highlight for high-security panels",
+    "shadows": "shadow-[0_0_25px_rgba(6,182,212,0.15)] for cyber accent elements, layered ambient drop shadows",
+    "grid_borders": "Subtle 1px cell dividers with border-white/5 for tactical command center look",
+    "textures": "Subtle noise overlay (2% opacity) on deep canvas to eliminate flat gradients"
+  },
+  "layout_and_grid": {
+    "spacing_scale": "Use generous spacing (p-6, p-8, p-12, gap-6, gap-8) to prevent visual density overload.",
+    "container_padding": "Containers with borders MUST have at least p-6 internal padding.",
+    "bento_grid": {
+      "mode": "MODE B: High Density Security Dashboard",
+      "base_cols": "grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6",
+      "spans": {
+        "status_summary": "col-span-1",
+        "primary_vault_data": "col-span-1 md:col-span-2 lg:col-span-3 row-span-2",
+        "security_feed": "col-span-1 row-span-2"
+      }
+    }
+  },
+  "key_features_and_ux_flows": {
+    "crypto_pass_login_flow": {
+      "behavior": "Only ask for 'Crypto Passphrase / Pass' if the user's security profile has Crypto Pass ENABLED.",
+      "requirement": "Do NOT prompt Crypto Pass for non-crypto enabled profiles. When disabled, standard auth occurs seamlessly.",
+      "ui": "Conditional step in login modal/page with clear visual indicator of required auth tier."
+    },
+    "hardcore_mode": {
+      "behavior": "Hardcore type is fixed & fully functional. Zero bugs, strict input validation, real-time lock out timers on consecutive failures.",
+      "ui": "Tactical red warning indicators, warning dialog with explicit acknowledgement, instant cryptographic response."
+    },
+    "advance_mode_passphrase_prompts": {
+      "behavior": "Layered passphrase validation before decrypting high-security vault items or modifying critical settings.",
+      "ui": "Interactive passphrase input with strength meter, Argon2 hash preview simulation, and lock state."
+    },
+    "vault_security_dashboard": {
+      "behavior": "Complete vault overview with real-time threat monitor, active sessions, key status, and granular security controls.",
+      "ui": "Bento-style layout with live security score, audit logs, and toggle controls."
+    }
+  },
+  "components": {
+    "buttons": "Pill-shaped or crisp rectangular buttons with cyan/violet primary focus rings. Includes hover lift (-translate-y-0.5) and glow effect. Explicit hover text colors always set.",
+    "inputs": "Dark input field bg-slate-900/90 border-slate-700/60 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 text-slate-100 font-mono text-sm px-4 py-3 rounded-lg",
+    "cards": "bg-slate-900/80 border border-slate-800 rounded-xl p-6 hover:border-slate-700 transition-all duration-200",
+    "modals_and_dialogs": "Use Shadcn Dialog/Sheet with backdrop-blur-2xl bg-slate-950/90 border border-slate-800 rounded-2xl p-6",
+    "toasts": "Sonner toast notifications (located in /app/frontend/src/components/ui/sonner.jsx) with high contrast background and custom action buttons."
+  },
+  "motion_and_interactions": {
+    "hover": "hover:scale-[1.02] hover:-translate-y-0.5 transition-all duration-200 ease-out",
+    "active": "active:scale-[0.98]",
+    "focus": "focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:ring-offset-2 focus:ring-offset-slate-950",
+    "page_transitions": "Framer Motion opacity fade + slight vertical slide (y: 10 to y: 0)"
+  },
+  "image_urls": [
+    {
+      "category": "hero_and_security_dashboard",
+      "url": "https://images.unsplash.com/photo-1751448555253-f39c06e29d82?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NzR8MHwxfHNlYXJjaHwxfHxjeWJlcnNlY3VyaXR5JTIwdmF1bHQlMjBoaWdoJTIwdGVjaCUyMHNlY3VyaXR5JTIwaW50ZXJmYWNlfGVufDB8fHx8MTc4ODQ1MjQwNXww&ixlib=rb-4.1.0&q=85",
+      "description": "High-tech security and privacy control panel dashboard overview"
+    },
+    {
+      "category": "control_panel",
+      "url": "https://images.unsplash.com/photo-1720962158937-7ea890052166?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NzR8MHwxfHNlYXJjaHwzfHxjeWJlcnNlY3VyaXR5JTIwdmF1bHQlMjBoaWdoJTIwdGVjaCUyMHNlY3VyaXR5JTIwaW50ZXJmYWNlfGVufDB8fHx8MTc4ODQ1MjQwNXww&ixlib=rb-4.1.0&q=85",
+      "description": "Encrypted telemetry and tactical security grid monitor"
+    },
+    {
+      "category": "account_verification",
+      "url": "https://images.unsplash.com/photo-1762340275855-ae8f4c2c144e?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NzR8MHwxfHNlYXJjaHw0fHxjeWJlcnNlY3VyaXR5JTIwdmF1bHQlMjBoaWdoJTIwdGVjaCUyMHNlY3VyaXR5JTIwaW50ZXJmYWNlfGVufDB8fHx8MTc4ODQ1MjQwNXww&ixlib=rb-4.1.0&q=85",
+      "description": "Account preferences and multi-layered verification interface"
+    }
   ],
-  "image_urls": [],
-  "component_path": "/app/frontend/src/components/",
-  "instructions_to_main_agent": "Build a world-class secure vault and password manager SaaS app with both landing/auth pages and a gorgeous dashboard. Ensure all interactive buttons, inputs, tabs, search bars, copy actions, export buttons, and modals include proper data-testid attributes. Use Sonner for toast notifications. Ensure zero hardcoded placeholder URLs. Adhere strictly to Tailwind CSS styling and design system rules."
+  "instructions_to_main_agent": [
+    "Ensure Crypto Pass login step is conditionally rendered based on user settings (if user has enabled Crypto pass, prompt for Crypto pass; otherwise do not prompt).",
+    "Fix Hardcore Mode type check so it works flawlessly across all login/vault actions without errors or broken validations.",
+    "Remove 'View Crypto Pass' button as requested to prevent plain-text exposure or unauthorized decryption inspection.",
+    "Ensure all interactive buttons, inputs, toggles, tabs, and informational displays include data-testid attributes (e.g., data-testid='crypto-pass-input').",
+    "Maintain high APCA text contrast with explicit hover text colors (never rely on default hover inheritance).",
+    "Use Sonner for toasts and Shadcn UI components for dropdowns, dialogs, tabs, and switches."
+  ],
+  "UNIVERSAL GUIDELINES FOR MAIN AGENT": [
+    "You tend to converge toward generic, 'on distribution' outputs. Avoid this: make creative, distinctive frontends that surprise and delight.",
+    "Dark colors look good when used independently without gradients. DO NOT use dark colors as gradients.",
+    "Don't make generic centered layouts, simplistic gradients, and uniform styling.",
+    "Create depth through layered design elements with z-index hierarchy.",
+    "Use glass-morphism effects with backdrop filters (12-24px blur).",
+    "You MUST NOT apply universal transition (e.g. transition: all). Always add transitions for specific interactive elements excluding transforms.",
+    "You MUST NOT center align the app container (.App { text-align: center; }).",
+    "Always use modern button styles like pill-shaped, or sharp button with interaction animations & color relevant to the app style.",
+    "NEVER use AI assistant Emoji characters like 🤖🧠💭💡🔮🎯 etc. for icons.",
+    "Every interaction needs micro-animations - hover states, transitions, parallax effects, and entrance animations.",
+    "Use 2-3x more spacing than feels comfortable. Containers with borders MUST have internal padding.",
+    "All interactive and key informational elements MUST include data-testid attribute in kebab-case."
+  ]
 }

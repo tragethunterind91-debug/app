@@ -1,11 +1,11 @@
 import { useState } from 'react';
-import { Moon, Sun, History, Monitor, Calendar, Check, ArrowUpRight, Download, RefreshCw, Skull, FileText, LogOut, Lock, X, AlertTriangle } from 'lucide-react';
+import { Moon, Sun, History, Monitor, Calendar, Check, ArrowUpRight, Download, RefreshCw, Skull, FileText, LogOut, X, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function SettingsPanel({
   user, settings, onSaveSettings, onSaveTheme, onSaveAutoLock, onLogout, onClose,
   pinEnabled, onSetupPin, onDisablePin,
-  l3Enabled, onToggleL3, onViewL3, onExportL3, onRegenL3,
+  l3Enabled, onToggleL3, onExportL3, onRegenL3,
   onOpenHardcore, hasBirthday, onSetupBirthday,
   disclaimerEnabled, onToggleDisclaimer,
   loginHistory, onLoadHistory, historyLoaded,
@@ -107,15 +107,8 @@ export default function SettingsPanel({
             <div className="settings-info"><b>Layer 3 Lock</b><p>Require crypto type pass verification on every login. You must pass a quiz to enable.</p></div>
             <label className="toggle-switch"><input type="checkbox" checked={l3Enabled} onChange={e => onToggleL3(e.target.checked)} /><span className="toggle-slider" /></label>
           </div>
-          <div className="settings-row clickable" data-testid="l3-view-btn" onClick={onViewL3}>
-            <div className="settings-info">
-              <b>View My 20 Passwords</b>
-              <p>{l3Enabled ? 'Requires your account password to view.' : 'See your current Layer 3 crypto type passwords.'}</p>
-            </div>
-            {l3Enabled ? <Lock size={16} style={{ color: 'var(--muted)', flexShrink: 0 }} /> : <ArrowUpRight size={16} style={{ color: 'var(--muted)', flexShrink: 0 }} />}
-          </div>
           <div className="settings-row clickable" data-testid="l3-export-btn" onClick={onExportL3}>
-            <div className="settings-info"><b>Export Passwords</b><p>Download your 20 crypto type passwords as a text file.</p></div>
+            <div className="settings-info"><b>Export Crypto Pass</b><p>Download the only offline copy of your 20 crypto type passwords.</p></div>
             <Download size={16} style={{ color: 'var(--muted)', flexShrink: 0 }} />
           </div>
           <div className="settings-row clickable" data-testid="l3-regen-btn" onClick={onRegenL3}>

@@ -12,7 +12,7 @@ import SettingsPanel from './SettingsPanel';
 
 const API=`${process.env.REACT_APP_BACKEND_URL}/api`;
 const client=axios.create({baseURL:API});
-const authHeader=()=>({headers:{Authorization:`Bearer ${localStorage.getItem('vault_token')}`}});
+const authHeader=(extra={})=>({headers:{Authorization:`Bearer ${localStorage.getItem('vault_token')}`,...extra}});
 const copyText=async(text)=>{try{await navigator.clipboard.writeText(text)}catch{const a=document.createElement('textarea');a.value=text;document.body.appendChild(a);a.select();document.execCommand('copy');a.remove()}};
 const hashPin=async(p)=>{const buf=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(p+'tp5-pin-salt'));return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('')};
 const formatApiError=detail=>{if(!detail)return 'Something went wrong. Please try again.';if(typeof detail==='string')return detail;if(Array.isArray(detail))return detail.map(e=>e?.msg||String(e)).join(' ');return detail?.msg||String(detail)};
@@ -114,7 +114,8 @@ function Auth({onLogin}){
             <label>Password<input data-testid="auth-password-input" type="password" value={password} onChange={e=>setPassword(e.target.value)} required minLength="8" placeholder="At least 8 characters"/></label>
             {mode==='login'&&loginStatus&&loginStatus.hardcore&&<div className="login-attempts-warn" data-testid="login-attempts-warning"><AlertTriangle size={14}/><div><b>Hardcore Mode Active</b><p>Today: {loginStatus.daily_used}/{loginStatus.daily_limit} tries used &bull; Total fails: {loginStatus.total_fails}/{loginStatus.total_limit} &bull; Consecutive days: {loginStatus.consecutive_days}/{loginStatus.days_limit}</p></div></div>}
             {mode==='register'&&<><label>Birthday <span className="birthday-warn">Please enter correctly — used for login verification</span><input data-testid="reg-birthday-input" type="date" value={regBirthday} onChange={e=>setRegBirthday(e.target.value)} required/></label><label>Confirm Birthday<input data-testid="reg-birthday-confirm" type="date" value={regBirthdayConfirm} onChange={e=>setRegBirthdayConfirm(e.target.value)} required/></label></>}
-            {mode==='login'&&<p className="birthday-login-hint" data-testid="birthday-hint">You will need your birthday to complete sign-in.</p>}
+            {mode==='login'&&<p className="birthday-login-hint" data-testid="birthday-hint">Birthday is required. Crypto Type Pass appears only if you turned it on.</p>}
+            {mode==='login'&&loginStatus?.layer3_enabled&&<div className="crypto-active-note" data-testid="crypto-pass-active-note"><Shield size={14}/><span>Crypto Type Pass is ON for this vault.</span></div>}
             {authError&&<div className="auth-error-box" data-testid="auth-error-message"><AlertTriangle size={15}/><span>{authError}</span></div>}
             <button className="primary wide" data-testid="auth-submit-button" disabled={busy}>{busy?'Securing…':mode==='login'?'Unlock vault':'Create vault'} <ArrowUpRight size={17}/></button>
           </form>
@@ -151,6 +152,7 @@ function Vault({user,onLogout}){
   const [showSharePicker,setShowSharePicker]=useState(null);
   const [showAdvancePrompt,setShowAdvancePrompt]=useState(null);
   const [advanceInput,setAdvanceInput]=useState('');
+  const [advancePassphrases,setAdvancePassphrases]=useState({});
   const [showShares,setShowShares]=useState(false);
   const [activeShares,setActiveShares]=useState([]);
   const [showSettings,setShowSettings]=useState(false);
@@ -244,8 +246,11 @@ function Vault({user,onLogout}){
   const save=async(e)=>{
     e.preventDefault();
     try{
+      if(!editing&&form.advance_mode&&!(form.advance_passphrase||'').trim()){toast.error('Advance Mode needs a passphrase');return}
+      if(editing&&!editing.advance_mode&&form.advance_mode&&!(form.advance_passphrase||'').trim()){toast.error('Set a passphrase before enabling Advance Mode');return}
       const payload={...form,tags:form.tags||[],custom_fields:form.custom_fields||[]};
-      if(editing) await client.put(`/items/${editing.id}`,payload,authHeader());
+      const config=editing?.advance_mode?authHeader({'X-Advance-Passphrase':advancePassphrases[editing.id]||''}):authHeader();
+      if(editing) await client.put(`/items/${editing.id}`,payload,config);
       else await client.post('/items',payload,authHeader());
       if(form.category&&!categories.includes(form.category))saveCategory(form.category);
       toast.success(editing?'Item updated':'Item encrypted and saved');
@@ -255,15 +260,15 @@ function Vault({user,onLogout}){
 
   const resetForm=()=>setForm({name:'',value:'',category:'Secret',totp_secret:'',url:'',advance_mode:false,advance_passphrase:'',tags:[],favorite:false,notes:'',custom_fields:[]});
 
-  const reveal=async(id)=>{const item=items.find(i=>i.id===id);if(item?.advance_mode&&!values[id]){setAdvanceInput('');setShowAdvancePrompt({item,action:'reveal'});return null}if(values[id]){setVisible(v=>({...v,[id]:!v[id]}));return values[id]} const r=await client.get(`/items/${id}/value`,authHeader()); setValues(v=>({...v,[id]:r.data.value}));setVisible(v=>({...v,[id]:true}));return r.data.value};
+  const reveal=async(id)=>{const item=items.find(i=>i.id===id);if(item?.advance_mode){if(visible[id]){setVisible(v=>({...v,[id]:false}));return values[id]||null}setAdvanceInput('');setShowAdvancePrompt({item,action:'reveal'});return null}if(values[id]){setVisible(v=>({...v,[id]:!v[id]}));return values[id]} const r=await client.get(`/items/${id}/value`,authHeader()); setValues(v=>({...v,[id]:r.data.value}));setVisible(v=>({...v,[id]:true}));return r.data.value};
 
-  const copy=async(id)=>{const item=items.find(i=>i.id===id);if(item?.advance_mode&&!values[id]){setAdvanceInput('');setShowAdvancePrompt({item,action:'copy'});return}const value=values[id]||await reveal(id);if(!value)return;await copyText(value);toast.success('Copied to clipboard')};
+  const copy=async(id)=>{const item=items.find(i=>i.id===id);if(item?.advance_mode){setAdvanceInput('');setShowAdvancePrompt({item,action:'copy'});return}const value=values[id]||await reveal(id);if(!value)return;await copyText(value);toast.success('Copied to clipboard')};
 
-  const remove=async(id)=>{const item=items.find(i=>i.id===id);if(item?.advance_mode&&!values[id]){setAdvanceInput('');setShowAdvancePrompt({item,action:'delete'});return}if(window.confirm('Delete this item permanently?')){await client.delete(`/items/${id}`,authHeader());toast.success('Item deleted');load()}};
+  const remove=async(id)=>{const item=items.find(i=>i.id===id);if(item?.advance_mode){setAdvanceInput('');setShowAdvancePrompt({item,action:'delete'});return}if(window.confirm('Delete this item permanently?')){await client.delete(`/items/${id}`,authHeader());toast.success('Item deleted');load()}};
 
-  const startEdit=async(item)=>{if(item.advance_mode&&!values[item.id]){setAdvanceInput('');setShowAdvancePrompt({item,action:'edit'});return}let v=values[item.id];if(!v){const r=await client.get(`/items/${item.id}/value`,authHeader());v=r.data.value;setValues(p=>({...p,[item.id]:v}))}setEditing(item);setForm({name:item.name,value:v,category:item.category,totp_secret:'',url:item.url||'',advance_mode:item.advance_mode||false,advance_passphrase:'',tags:item.tags||[],favorite:item.favorite||false,notes:item.notes||'',custom_fields:item.custom_fields||[]});setShowForm(true)};
+  const startEdit=async(item)=>{if(item.advance_mode){setAdvanceInput('');setShowAdvancePrompt({item,action:'edit'});return}let v=values[item.id];if(!v){const r=await client.get(`/items/${item.id}/value`,authHeader());v=r.data.value;setValues(p=>({...p,[item.id]:v}))}setEditing(item);setForm({name:item.name,value:v,category:item.category,totp_secret:'',url:item.url||'',advance_mode:item.advance_mode||false,advance_passphrase:'',tags:item.tags||[],favorite:item.favorite||false,notes:item.notes||'',custom_fields:item.custom_fields||[]});setShowForm(true)};
 
-  const submitAdvancePassphrase=async()=>{if(!showAdvancePrompt)return;const{item,action}=showAdvancePrompt;try{const r=await client.post(`/items/${item.id}/advance-reveal`,{passphrase:advanceInput},authHeader());const val=r.data.value;setValues(p=>({...p,[item.id]:val}));setShowAdvancePrompt(null);setAdvanceInput('');if(action==='reveal'){setVisible(p=>({...p,[item.id]:true}))}else if(action==='copy'){await copyText(val);toast.success('Copied!')}else if(action==='edit'){setEditing(item);setForm({name:item.name,value:val,category:item.category,totp_secret:'',url:item.url||'',advance_mode:true,advance_passphrase:'',tags:item.tags||[],favorite:item.favorite||false,notes:item.notes||'',custom_fields:item.custom_fields||[]});setShowForm(true)}else if(action==='delete'){if(window.confirm('Delete this item permanently?')){await client.delete(`/items/${item.id}`,authHeader());toast.success('Item deleted');load()}}}catch(e){const msg=e.response?.data?.detail||'Wrong passphrase';toast.error(msg,{duration:msg.includes('lock')||msg.includes('attempt')?8000:3000})}};
+  const submitAdvancePassphrase=async()=>{if(!showAdvancePrompt)return;const{item,action}=showAdvancePrompt;try{const passphrase=advanceInput;if(action==='delete'){if(window.confirm('Delete this item permanently?')){await client.delete(`/items/${item.id}`,authHeader({'X-Advance-Passphrase':passphrase}));setShowAdvancePrompt(null);setAdvanceInput('');toast.success('Item deleted');load()}return}if(action==='totp'){const secret=await client.get(`/items/${item.id}/totp`,authHeader({'X-Advance-Passphrase':passphrase}));const code=await getTOTP(secret.data.secret);setShowAdvancePrompt(null);setAdvanceInput('');copyText(code).catch(()=>{});toast.success(`OTP: ${code.slice(0,3)} ${code.slice(3)} — copied!`,{duration:6000});return}const r=await client.post(`/items/${item.id}/advance-reveal`,{passphrase},authHeader());const val=r.data.value;setValues(p=>({...p,[item.id]:val}));setAdvancePassphrases(p=>({...p,[item.id]:passphrase}));setShowAdvancePrompt(null);setAdvanceInput('');if(action==='reveal'){setVisible(p=>({...p,[item.id]:true}))}else if(action==='copy'){await copyText(val);toast.success('Copied!')}else if(action==='edit'){setEditing(item);setForm({name:item.name,value:val,category:item.category,totp_secret:'',url:item.url||'',advance_mode:true,advance_passphrase:'',tags:item.tags||[],favorite:item.favorite||false,notes:item.notes||'',custom_fields:item.custom_fields||[]});setShowForm(true)}}catch(e){const msg=e.response?.data?.detail||'Wrong passphrase';toast.error(msg,{duration:msg.includes('lock')||msg.includes('attempt')?8000:3000})}};
 
   const toggleFavorite=async(id)=>{
     try{
@@ -285,7 +290,7 @@ function Vault({user,onLogout}){
 
   const b32d=s=>{const a='ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';let bits=0,val=0,out=[];for(const c of s.toUpperCase().replace(/[^A-Z2-7]/g,'')){val=(val<<5)|a.indexOf(c);bits+=5;if(bits>=8){out.push((val>>>(bits-8))&0xFF);bits-=8}}return new Uint8Array(out)};
   const getTOTP=async secret=>{const key=b32d(secret);const T=Math.floor(Date.now()/30000);const msg=new Uint8Array(8);new DataView(msg.buffer).setUint32(4,T);const k=await crypto.subtle.importKey('raw',key,{name:'HMAC',hash:'SHA-1'},false,['sign']);const sig=new Uint8Array(await crypto.subtle.sign('HMAC',k,msg));const o=sig[19]&0xf;return(((sig[o]&0x7f)<<24|(sig[o+1]&0xff)<<16|(sig[o+2]&0xff)<<8|(sig[o+3]&0xff))%1000000).toString().padStart(6,'0')};
-  const revealTOTP=async(item)=>{try{const r=await client.get(`/items/${item.id}/totp`,authHeader());const code=await getTOTP(r.data.secret);copyText(code).catch(()=>{});toast.success(`OTP: ${code.slice(0,3)} ${code.slice(3)} — copied!`,{duration:6000})}catch{toast.error('No TOTP configured')}};
+  const revealTOTP=async(item)=>{if(item.advance_mode){setAdvanceInput('');setShowAdvancePrompt({item,action:'totp'});return}try{const r=await client.get(`/items/${item.id}/totp`,authHeader());const code=await getTOTP(r.data.secret);copyText(code).catch(()=>{});toast.success(`OTP: ${code.slice(0,3)} ${code.slice(3)} — copied!`,{duration:6000})}catch{toast.error('No TOTP configured')}};
 
   const sha1hex=async str=>{const buf=await crypto.subtle.digest('SHA-1',new TextEncoder().encode(str));return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('').toUpperCase()};
   const checkBreach=async(item)=>{if(item?.advance_mode){toast.error('Advance Mode items cannot be breach-checked automatically.');return}let val=values[item.id];if(!val){const r=await client.get(`/items/${item.id}/value`,authHeader());val=r.data.value;setValues(p=>({...p,[item.id]:val}))}try{const h=await sha1hex(val);const resp=await fetch(`https://api.pwnedpasswords.com/range/${h.slice(0,5)}`);const text=await resp.text();const found=text.split('\n').find(l=>l.startsWith(h.slice(5)));if(found){toast.error(`Leaked in ${parseInt(found.split(':')[1]).toLocaleString()} breaches!`,{duration:6000})}else{toast.success('Not found in any known breach')}}catch{toast.error('Breach check failed')}};
@@ -506,7 +511,7 @@ function Vault({user,onLogout}){
     </div></div>}
 
     {/* Advance Mode Prompt */}
-    {showAdvancePrompt&&<div className="modal-backdrop"><div className="modal adv-modal" data-testid="advance-prompt-modal"><button type="button" className="modal-close icon-btn" onClick={()=>{setShowAdvancePrompt(null);setAdvanceInput('')}}><X/></button><p className="eyebrow">ADVANCE MODE</p><h2><Lock size={18}/> Enter Passphrase</h2><p className="muted">This item is locked with an extra passphrase. Enter it to proceed.</p><input data-testid="advance-passphrase-field" type="password" className="adv-input" value={advanceInput} onChange={e=>setAdvanceInput(e.target.value)} onKeyDown={e=>e.key==='Enter'&&submitAdvancePassphrase()} placeholder="Your secret passphrase" autoFocus/><button className="primary wide" data-testid="advance-submit-button" onClick={submitAdvancePassphrase}><Lock size={15}/> Unlock</button></div></div>}
+    {showAdvancePrompt&&<div className="modal-backdrop"><div className="modal adv-modal" data-testid="advance-prompt-modal"><button type="button" className="modal-close icon-btn" data-testid="advance-prompt-close" onClick={()=>{setShowAdvancePrompt(null);setAdvanceInput('')}}><X/></button><p className="eyebrow">ADVANCE MODE</p><h2><Lock size={18}/> Enter Passphrase</h2><p className="muted">This item is locked with an extra passphrase. Enter it to proceed.</p><input data-testid="advance-passphrase-field" type="password" className="adv-input" value={advanceInput} onChange={e=>setAdvanceInput(e.target.value)} onKeyDown={e=>e.key==='Enter'&&advanceInput.trim()&&submitAdvancePassphrase()} placeholder="Your secret passphrase" autoFocus/><button className="primary wide" data-testid="advance-submit-button" disabled={!advanceInput.trim()} onClick={submitAdvancePassphrase}><Lock size={15}/> Unlock</button></div></div>}
 
     {/* My Share Links */}
     {showShares&&<div className="modal-backdrop"><div className="modal shares-modal" data-testid="my-shares-modal"><button type="button" className="modal-close icon-btn" data-testid="close-shares-modal" onClick={()=>setShowShares(false)}><X/></button><p className="eyebrow">ACTIVE LINKS</p><h2>My Share Links</h2><p className="muted" style={{fontSize:'12px',marginBottom:'12px'}}>To create a share link: click the <Share2 size={11} style={{display:'inline',verticalAlign:'middle'}}/> icon on any vault item.</p>{activeShares.length===0?<p className="muted">No active share links yet.</p>:<div className="shares-list">{activeShares.map((s,i)=><div key={i} className="share-row" data-testid={`share-row-${i}`}><div><b className="share-item-name">{s.item_name}</b><span className="share-exp">Expires {new Date(s.expires).toLocaleString()}</span></div><button className="icon-btn danger" data-testid={`revoke-share-${i}`} onClick={()=>revokeShare(s.token)} title="Revoke"><Trash2 size={15}/></button></div>)}</div>}</div></div>}
@@ -534,7 +539,7 @@ function Vault({user,onLogout}){
       pinEnabled={pinEnabled}
       onSetupPin={async(pin)=>{const h=await hashPin(pin);localStorage.setItem('vault_pin_hash',h);setPinEnabled(true);toast.success('PIN lock enabled!')}}
       onDisablePin={()=>{localStorage.removeItem('vault_pin_hash');setPinEnabled(false);setShowPinLock(false);if(inactivityRef.current)clearTimeout(inactivityRef.current);toast.success('PIN lock disabled')}}
-      l3Enabled={l3Enabled} onToggleL3={toggleL3} onViewL3={viewL3} onExportL3={exportL3Passwords} onRegenL3={()=>{setShowL3Regen(true);setShowSettings(false)}}
+      l3Enabled={l3Enabled} onToggleL3={toggleL3} onExportL3={exportL3Passwords} onRegenL3={()=>{setShowL3Regen(true);setShowSettings(false)}}
       onOpenHardcore={async()=>{await loadHardcore();setShowSecuritySettings(true);setShowSettings(false)}}
       hasBirthday={hasBirthday} onSetupBirthday={()=>{setShowBirthdaySetup(true);setShowSettings(false)}}
       disclaimerEnabled={disclaimerEnabled} onToggleDisclaimer={toggleDisclaimer}
@@ -578,7 +583,7 @@ function Vault({user,onLogout}){
 
     {/* Hardcore Mode Settings */}
     {showSecuritySettings&&hardcoreData&&<div className="modal-backdrop"><div className="modal hardcore-modal" data-testid="hardcore-modal"><button type="button" className="modal-close icon-btn" onClick={()=>setShowSecuritySettings(false)}><X/></button><p className="eyebrow">DANGER ZONE</p><h2><Skull size={20}/> Hardcore Mode</h2>
-      <p className="muted" style={{color:'#ff6b74'}}>When enabled, your account and ALL passwords will be PERMANENTLY DELETED if you exceed the failure limits below.</p>
+      <p className="muted" style={{color:'#ff6b74'}}>When enabled, temporary lockouts are bypassed and your account plus ALL saved passwords are PERMANENTLY DELETED the moment these limits are reached.</p>
       <div className="settings-row" style={{marginTop:'16px'}}><div className="settings-info"><b>Enable Hardcore Mode</b></div><label className="toggle-switch"><input type="checkbox" checked={hardcoreData.enabled} onChange={e=>{if(e.target.checked&&!window.confirm('Are you sure? This will permanently delete your account if you fail too many times.'))return;saveHardcore({...hardcoreData.settings,enabled:e.target.checked})}}/><span className="toggle-slider"/></label></div>
       <div className="hardcore-limits">
         <label>Max consecutive fail days<input data-testid="hc-fail-days" type="number" min="1" max="30" value={hardcoreData.settings.max_login_fail_days} onChange={e=>setHardcoreData(d=>({...d,settings:{...d.settings,max_login_fail_days:+e.target.value}}))}/></label>

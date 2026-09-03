@@ -110,6 +110,37 @@ def safe_item(doc):
 async def log_event(user_id: str, action: str, detail: str = ''):
     try: await db.audit.insert_one({'user_id':user_id,'action':action,'detail':detail,'ts':datetime.now(timezone.utc).isoformat()})
     except Exception: pass
+async def delete_hardcore_account(user, detail: str):
+    user_id = user['id']
+    await db.items.delete_many({'user_id': user_id})
+    await db.shares.delete_many({'user_id': user_id})
+    await db.preferences.delete_many({'user_id': user_id})
+    await db.password_history.delete_many({'user_id': user_id})
+    await db.login_history.delete_many({'user_id': user_id})
+    await db.recovery.delete_many({'user_id': user_id})
+    await log_event(user_id, 'HARDCORE_DELETE', detail)
+    await db.users.delete_one({'id': user_id})
+async def verify_advance_access(doc, user_id: str, passphrase: str | None):
+    if not doc.get('advance_mode'):
+        return
+    locked_until = doc.get('advance_locked_until')
+    if locked_until and datetime.fromisoformat(locked_until) > datetime.now(timezone.utc):
+        remaining = datetime.fromisoformat(locked_until) - datetime.now(timezone.utc)
+        days = remaining.days + 1
+        raise HTTPException(423, f'Item locked after too many failed attempts. Try again in {days} day{"s" if days != 1 else ""}.')
+    if not doc.get('advance_hash') or not pwd.verify(passphrase or '', doc['advance_hash']):
+        fails = doc.get('advance_failed_attempts', 0) + 1
+        upd = {'advance_failed_attempts': fails}
+        if fails >= 4:
+            upd['advance_locked_until'] = (datetime.now(timezone.utc) + timedelta(days=3)).isoformat()
+            upd['advance_failed_attempts'] = 0
+            await db.items.update_one({'id': doc['id'], 'user_id': user_id}, {'$set': upd})
+            await log_event(user_id, 'ADVANCE_LOCKED', doc.get('name', doc['id']))
+            raise HTTPException(423, 'Item locked for 3 days after 4 failed attempts.')
+        await db.items.update_one({'id': doc['id'], 'user_id': user_id}, {'$set': upd})
+        remaining_attempts = 4 - fails
+        raise HTTPException(401, f'Wrong passphrase. {remaining_attempts} attempt{"s" if remaining_attempts != 1 else ""} remaining before 3-day lockout.')
+    await db.items.update_one({'id': doc['id'], 'user_id': user_id}, {'$set': {'advance_failed_attempts': 0}, '$unset': {'advance_locked_until': ''}})
 def describe_device(user_agent: str) -> str:
     ua = (user_agent or '').lower()
     browser = 'Browser'
@@ -164,7 +195,7 @@ async def login(data: Credentials, request: Request, response: Response):
         raise HTTPException(401, 'Email or password is incorrect')
     fl = user.get('failed_logins', {})
     lock_until = fl.get('lock_until')
-    if lock_until:
+    if lock_until and not user.get('hardcore_enabled'):
         try:
             lock_dt = datetime.fromisoformat(lock_until)
             if lock_dt > datetime.now(timezone.utc):
@@ -181,9 +212,7 @@ async def login(data: Credentials, request: Request, response: Response):
         fl = user.get('failed_logins', {})
         hs = user.get('hardcore_settings', {})
         if fl.get('count', 0) >= hs.get('max_login_fails', 16) or fl.get('consecutive_days', 0) >= hs.get('max_login_fail_days', 4):
-            await db.items.delete_many({'user_id': user['id']})
-            await db.users.delete_one({'id': user['id']})
-            await log_event(user['id'], 'HARDCORE_DELETE', 'Account auto-deleted due to failed login limits')
+            await delete_hardcore_account(user, 'Account auto-deleted due to failed login limits')
             raise HTTPException(410, 'Account permanently deleted — too many failed login attempts (Hardcore Mode).')
         # Daily limit check
         today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
@@ -228,9 +257,18 @@ async def _track_login_fail(user):
         fl['daily_count'] = 1
         fl['last_fail_date'] = today
     fl['count'] = fl.get('count', 0) + 1
-    if fl['count'] >= 5:
-        fl['lock_until'] = (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat()
     await db.users.update_one({'id': user['id']}, {'$set': {'failed_logins': fl}})
+    if user.get('hardcore_enabled'):
+        hs = user.get('hardcore_settings', {})
+        if fl['count'] >= hs.get('max_login_fails', 16) or fl['consecutive_days'] >= hs.get('max_login_fail_days', 4):
+            await delete_hardcore_account(user, 'Account auto-deleted immediately after failed login limit was reached')
+            raise HTTPException(410, 'Account permanently deleted — too many failed login attempts (Hardcore Mode).')
+        if fl['daily_count'] >= hs.get('max_daily_tries', 4):
+            await log_event(user['id'], 'LOGIN_DAILY_LIMIT', f"daily={fl['daily_count']}")
+            raise HTTPException(429, f'Daily login limit reached ({hs.get("max_daily_tries", 4)} tries). Try again tomorrow.')
+    elif fl['count'] >= 5:
+        fl['lock_until'] = (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat()
+        await db.users.update_one({'id': user['id']}, {'$set': {'failed_logins.lock_until': fl['lock_until']}})
     await log_event(user['id'], 'LOGIN_FAIL', f"count={fl['count']}, days={fl['consecutive_days']}")
 
 async def _reset_login_fails(user):
@@ -282,9 +320,7 @@ async def verify_layer3(data: L3QuizAnswer, request: Request, response: Response
             if user.get('hardcore_enabled'):
                 hs = user.get('hardcore_settings', {})
                 if fl['layer3_fails'] >= hs.get('max_layer3_fails', 8):
-                    await db.items.delete_many({'user_id': user['id']})
-                    await db.users.delete_one({'id': user['id']})
-                    await log_event(user['id'], 'HARDCORE_DELETE', 'Account deleted: Layer 3 fail limit exceeded')
+                    await delete_hardcore_account(user, 'Account deleted: Layer 3 fail limit exceeded')
                     raise HTTPException(410, 'Account permanently deleted — too many Layer 3 failures (Hardcore Mode).')
             await log_event(user['id'], 'L3_FAIL', f"fails={fl['layer3_fails']}")
             raise HTTPException(401, f'Layer 3 verification failed. Wrong answer for pass {idx + 1}.')
@@ -324,14 +360,15 @@ async def set_birthday(data: BirthdayVerify, authorization: str | None = Header(
 async def get_login_status(email: str):
     """Public endpoint: returns fail status for displaying attempts info on login screen."""
     user = await db.users.find_one({'email': email.lower()}, {'_id': 0})
-    if not user: return {'hardcore': False}
-    if not user.get('hardcore_enabled'): return {'hardcore': False}
+    if not user: return {'hardcore': False, 'layer3_enabled': False}
+    if not user.get('hardcore_enabled'): return {'hardcore': False, 'layer3_enabled': user.get('layer3_enabled', False)}
     fl = user.get('failed_logins', {})
     hs = user.get('hardcore_settings', {})
     today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
     daily_used = fl.get('daily_count', 0) if fl.get('last_fail_date') == today else 0
     return {
         'hardcore': True,
+        'layer3_enabled': user.get('layer3_enabled', False),
         'daily_used': daily_used,
         'daily_limit': hs.get('max_daily_tries', 4),
         'total_fails': fl.get('count', 0),
@@ -355,6 +392,8 @@ async def get_layer3_passwords(authorization: str | None = Header(default=None),
             'layer3_change_week_start': datetime.now(timezone.utc).isoformat(),
         }})
         user = await db.users.find_one({'id': claims['sub']}, {'_id': 0})
+    if not for_export and user.get('l3_viewed'):
+        raise HTTPException(403, 'Crypto Type Pass can only be viewed once. Use Export Crypto Pass for your offline copy.')
     # If L3 is enabled, require account password to view (not for export)
     if user.get('layer3_enabled') and not for_export:
         if not password:
@@ -362,6 +401,8 @@ async def get_layer3_passwords(authorization: str | None = Header(default=None),
         if not pwd.verify(password, user['password']):
             raise HTTPException(401, 'Wrong password')
     passwords = json.loads(fernet.decrypt(user['layer3_passwords_enc'].encode()).decode())
+    if not for_export:
+        await db.users.update_one({'id': claims['sub']}, {'$set': {'l3_viewed': True}})
     return {'passwords': passwords, 'enabled': user.get('layer3_enabled', False)}
 
 @router.post('/auth/toggle-layer3')
@@ -454,6 +495,8 @@ async def items(authorization: str | None = Header(default=None)):
 @router.post('/items')
 async def create_item(data: ItemIn, authorization: str | None = Header(default=None)):
     user = auth_user(authorization); now = datetime.now(timezone.utc).isoformat()
+    if data.advance_mode and not data.advance_passphrase:
+        raise HTTPException(400, 'Advance Mode requires a passphrase')
     doc = {'id':str(uuid.uuid4()),'user_id':user['sub'],'name':data.name,'category':data.category,'secret':fernet.encrypt(data.value.encode()).decode(),'created_at':now,'updated_at':now,'tags':data.tags,'favorite':data.favorite,'notes':data.notes,'custom_fields':[cf.dict() for cf in data.custom_fields]}
     if data.url: doc['url'] = data.url
     if data.totp_secret: doc['totp_enc']=fernet.encrypt(data.totp_secret.encode()).decode()
@@ -469,10 +512,14 @@ async def reveal_item(item_id: str, authorization: str | None = Header(default=N
     await log_event(user['sub'],'REVEAL',doc['name']); return {'id': item_id, 'value': fernet.decrypt(doc['secret'].encode()).decode()}
 
 @router.put('/items/{item_id}')
-async def update_item(item_id: str, data: ItemIn, authorization: str | None = Header(default=None)):
+async def update_item(item_id: str, data: ItemIn, authorization: str | None = Header(default=None), x_advance_passphrase: str | None = Header(default=None)):
     user = auth_user(authorization); now=datetime.now(timezone.utc).isoformat()
     old_doc = await db.items.find_one({'id':item_id,'user_id':user['sub']},{'_id':0})
     if not old_doc: raise HTTPException(404,'Item not found')
+    if old_doc.get('advance_mode'):
+        await verify_advance_access(old_doc, user['sub'], x_advance_passphrase)
+    elif data.advance_mode and not data.advance_passphrase:
+        raise HTTPException(400, 'Advance Mode requires a passphrase')
     upd={'name':data.name,'category':data.category,'secret':fernet.encrypt(data.value.encode()).decode(),'updated_at':now,'url':data.url or '','advance_mode':data.advance_mode,'tags':data.tags,'favorite':data.favorite,'notes':data.notes,'custom_fields':[cf.dict() for cf in data.custom_fields]}
     if data.totp_secret is not None: upd['totp_enc']=fernet.encrypt(data.totp_secret.encode()).decode() if data.totp_secret else None
     if data.advance_mode and data.advance_passphrase: upd['advance_hash']=pwd.hash(data.advance_passphrase)
@@ -482,12 +529,14 @@ async def update_item(item_id: str, data: ItemIn, authorization: str | None = He
     if old_val != data.value:
         await db.password_history.insert_one({'id':str(uuid.uuid4()),'item_id':item_id,'user_id':user['sub'],'old_value_enc':old_doc['secret'],'changed_at':now})
     result=await db.items.update_one({'id':item_id,'user_id':user['sub']},{'$set':upd})
-    doc=await db.items.find_one({'id':item_id},{'_id':0}); await log_event(user['sub'],'EDIT',data.name); return safe_item(doc)
+    doc=await db.items.find_one({'id':item_id,'user_id':user['sub']},{'_id':0}); await log_event(user['sub'],'EDIT',data.name); return safe_item(doc)
 
 @router.delete('/items/{item_id}')
-async def delete_item(item_id: str, authorization: str | None = Header(default=None)):
+async def delete_item(item_id: str, authorization: str | None = Header(default=None), x_advance_passphrase: str | None = Header(default=None)):
     user=auth_user(authorization); doc=await db.items.find_one({'id':item_id,'user_id':user['sub']},{'_id':0})
     if not doc: raise HTTPException(404,'Item not found')
+    if doc.get('advance_mode'):
+        await verify_advance_access(doc, user['sub'], x_advance_passphrase)
     await db.items.delete_one({'id':item_id,'user_id':user['sub']}); await log_event(user['sub'],'DELETE',doc['name']); return {'ok':True}
 
 @router.post('/items/import')
@@ -499,9 +548,11 @@ async def import_items(data: ItemsImportIn, authorization: str | None = Header(d
     return {'count':len(created),'items':created}
 
 @router.get('/items/{item_id}/totp')
-async def get_totp(item_id: str, authorization: str | None = Header(default=None)):
+async def get_totp(item_id: str, authorization: str | None = Header(default=None), x_advance_passphrase: str | None = Header(default=None)):
     user=auth_user(authorization); doc=await db.items.find_one({'id':item_id,'user_id':user['sub']},{'_id':0})
     if not doc or not doc.get('totp_enc'): raise HTTPException(404,'No TOTP configured')
+    if doc.get('advance_mode'):
+        await verify_advance_access(doc, user['sub'], x_advance_passphrase)
     return {'secret':fernet.decrypt(doc['totp_enc'].encode()).decode()}
 
 @router.patch('/items/{item_id}/favorite')
@@ -524,6 +575,9 @@ async def update_tags(item_id: str, data: dict, authorization: str | None = Head
 async def bulk_action(data: BulkActionIn, authorization: str | None = Header(default=None)):
     user=auth_user(authorization)
     if data.action == 'delete':
+        protected = await db.items.count_documents({'id': {'$in': data.item_ids}, 'user_id': user['sub'], 'advance_mode': True})
+        if protected:
+            raise HTTPException(403, 'Bulk delete cannot include Advance Mode items. Unlock and delete protected items one at a time.')
         result = await db.items.delete_many({'id':{'$in':data.item_ids},'user_id':user['sub']})
         await log_event(user['sub'],'BULK_DELETE',f"{result.deleted_count} items")
         return {'ok':True,'deleted':result.deleted_count}
@@ -581,24 +635,7 @@ async def advance_reveal(item_id: str, data: dict, authorization: str | None = H
     user=auth_user(authorization); doc=await db.items.find_one({'id':item_id,'user_id':user['sub']},{'_id':0})
     if not doc: raise HTTPException(404,'Item not found')
     if not doc.get('advance_mode'): raise HTTPException(400,'Not an Advance Mode item')
-    locked_until=doc.get('advance_locked_until')
-    if locked_until and datetime.fromisoformat(locked_until)>datetime.now(timezone.utc):
-        remaining=datetime.fromisoformat(locked_until)-datetime.now(timezone.utc)
-        days=remaining.days+1
-        raise HTTPException(423,f'Item locked after too many failed attempts. Try again in {days} day{"s" if days!=1 else ""}.')
-    if not doc.get('advance_hash') or not pwd.verify(data.get('passphrase',''),doc['advance_hash']):
-        fails=doc.get('advance_failed_attempts',0)+1
-        upd={'advance_failed_attempts':fails}
-        if fails>=4:
-            upd['advance_locked_until']=(datetime.now(timezone.utc)+timedelta(days=3)).isoformat()
-            upd['advance_failed_attempts']=0
-            await db.items.update_one({'id':item_id},{'$set':upd})
-            await log_event(user['sub'],'ADVANCE_LOCKED',doc['name'])
-            raise HTTPException(423,'Item locked for 3 days after 4 failed attempts.')
-        await db.items.update_one({'id':item_id},{'$set':upd})
-        remaining_attempts=4-fails
-        raise HTTPException(401,f'Wrong passphrase. {remaining_attempts} attempt{"s" if remaining_attempts!=1 else ""} remaining before 3-day lockout.')
-    await db.items.update_one({'id':item_id},{'$set':{'advance_failed_attempts':0}})
+    await verify_advance_access(doc, user['sub'], data.get('passphrase', ''))
     await log_event(user['sub'],'ADVANCE_REVEAL',doc['name']); return {'id':item_id,'value':fernet.decrypt(doc['secret'].encode()).decode()}
 
 @router.get('/shares')
@@ -656,6 +693,8 @@ async def get_audit(authorization: str | None = Header(default=None)):
 async def share_item(item_id: str, data: ShareIn, authorization: str | None = Header(default=None)):
     user=auth_user(authorization); doc=await db.items.find_one({'id':item_id,'user_id':user['sub']},{'_id':0})
     if not doc: raise HTTPException(404,'Item not found')
+    if doc.get('advance_mode'):
+        raise HTTPException(403, 'Advance Mode items cannot be shared')
     token=secrets.token_urlsafe(20); await db.shares.insert_one({'token':token,'item_id':item_id,'user_id':user['sub'],'expires':(datetime.now(timezone.utc)+timedelta(hours=data.hours)).isoformat()}); await log_event(user['sub'],'SHARE',doc['name']); return {'token':token,'hours':data.hours}
 
 @router.get('/share/{share_token}')
@@ -664,6 +703,7 @@ async def get_share(share_token: str):
     if not doc or datetime.fromisoformat(doc['expires'])<datetime.now(timezone.utc): raise HTTPException(404,'Share link expired')
     item=await db.items.find_one({'id':doc['item_id']},{'_id':0})
     if not item: raise HTTPException(404,'Item not found')
+    if item.get('advance_mode'): raise HTTPException(403,'This shared item is now protected by Advance Mode')
     return {'name':item['name'],'value':fernet.decrypt(item['secret'].encode()).decode(),'expires':doc['expires']}
 
 @router.post('/auth/recovery')

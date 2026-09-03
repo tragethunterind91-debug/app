@@ -8,7 +8,7 @@ import os
 import time
 import uuid
 
-BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', 'https://github-import-134.preview.emergentagent.com').rstrip('/')
+BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', 'https://code-importer-47.preview.emergentagent.com').rstrip('/')
 
 # Test credentials from test_credentials.md
 ADMIN_EMAIL = "admin@toppass5.com"

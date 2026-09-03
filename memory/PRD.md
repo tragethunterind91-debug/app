@@ -57,6 +57,18 @@ Build a website for saving passwords/values with tight security (TopPass5). User
 - Public home page expanded into a longer, more professional pre-login experience with executive/security/trust sections
 - Admin panel separated to `/admin`; admin/owner links removed from the main vault UI
 - Website URL / Smart Fill UI removed from vault add/edit forms, item rows, and item properties
+- Conditional Crypto Type Pass login confirmed: Layer 3 quiz appears only when Crypto Type Pass is enabled
+- Settings "View My 20 Passwords" Crypto Pass button removed; Export Crypto Pass remains for offline backup
+- Crypto Type Pass one-time API view enforced; export remains available
+- Advance Mode hardened across reveal, edit, delete, TOTP, share, and bulk-delete paths
+- Hardcore Mode fixed so configured failure limits trigger account/vault deletion immediately instead of being blocked by normal temporary lockout
+
+## Latest Verification — 2026-09-03 Security Hardening
+- `python -m py_compile backend/server.py` passed
+- `yarn build` passed with existing React hook dependency warnings in `App.js`
+- Self-test API security flow passed: conditional Crypto Pass status, birthday-to-complete when Layer 3 is off, one-time Crypto Pass view/export, Advance Mode endpoint protections, and Hardcore deletion at configured limit
+- UI smoke test passed on preview: Settings opens, `l3-view-btn` is removed, and `l3-export-btn` remains
+- Testing agent iteration 12 verified core requested frontend/backend flows; only reported issue is preview-edge CORS OPTIONS behavior, which is not app-code controlled. Local backend CORS and full iteration12 pytest passed: 7/7 with `REACT_APP_BACKEND_URL=http://localhost:8001`
 
 ## Latest Verification — 2026-09-03
 - `python -m py_compile backend/server.py` passed
@@ -67,6 +79,7 @@ Build a website for saving passwords/values with tight security (TopPass5). User
 - UI smoke tested: long home sections render, `/admin` requires login and loads admin panel, main vault has no admin links, add/edit form has no website URL field
 
 ## Backlog
+- P0: Monitor preview-edge CORS warning during deployment/production verification; app backend local CORS is correct
 - P1: Continue remaining vault/security backlog: folders/tags, favorites, bulk actions, password history, duplicate detector, CSV import/export polishing
 - P1: Add session management, two-device alerts, password expiry reminders, onboarding tour, dashboard stats
 - P1: Premium tiers + Google Ad Manager tags (Stripe playbook required before implementation; Ad Manager waiting for user code)

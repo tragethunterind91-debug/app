@@ -1,15 +1,8 @@
-# Custom Auth Testing Notes for TopPass5
+# TopPass5 Auth Testing Playbook
 
-## Relevant auth flows
-- `POST /api/auth/register` creates a vault with email, password, birthday.
-- `POST /api/auth/login` may return `stage: birthday` when birthday verification is required.
-- `POST /api/auth/verify-birthday` completes login or returns `stage: layer3`.
-- `POST /api/auth/verify-layer3` completes Layer 3 login.
-- `GET /api/auth/me` validates the current Bearer token.
-- `GET /api/auth/login-history` returns the last 5 completed login events for Settings.
-
-## Regression focus
-- Wrong email/password must show a safe, readable error and must not crash the UI.
-- Birthday and Layer 3 staged tokens must not access full-auth endpoints.
-- Advance Mode items must reject `/api/items/{id}/value` and require `/api/items/{id}/advance-reveal`.
-- Login history must exclude Mongo `_id` and return JSON-safe fields only.
+- Verify email/password login returns staged auth when birthday is configured.
+- Verify birthday completes login when Crypto Type Pass is disabled.
+- Verify birthday advances to Crypto Type Pass quiz only when Layer 3 is enabled.
+- Verify wrong passwords increment rate limits; normal accounts lock temporarily after 5 failures.
+- Verify Hardcore Mode users do not get blocked by temporary lockout and are deleted when configured failure limits are reached.
+- Verify Advance Mode items reject normal value, update, delete, share, bulk-delete, and TOTP access unless the passphrase is supplied.

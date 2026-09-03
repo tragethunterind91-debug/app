@@ -161,8 +161,8 @@ frontend:
         comment: "Mobile settings access works correctly. Mobile topbar appears with hamburger button (data-testid='mobile-menu-toggle'). Clicking opens full-screen nav drawer (data-testid='mobile-nav-drawer') with all nav items including Settings (data-testid='mobile-settings-nav'). Settings modal opens correctly on mobile. Also verified Settings is accessible on desktop via sidebar (data-testid='settings-nav')."
 
   - task: "Advance Mode Gating - All Actions"
-    implemented: false
-    working: false
+    implemented: true
+    working: "NA"
     file: "/app/frontend/src/App.js"
     stuck_count: 0
     priority: "critical"
@@ -171,6 +171,9 @@ frontend:
       - working: false
         agent: "testing"
         comment: "CRITICAL BUG FOUND: Advance Mode passphrase gating is NOT working. When an item has advance_mode enabled, clicking Reveal does NOT show the passphrase prompt modal (data-testid='advance-prompt-modal'). Instead, the value is revealed directly without any authentication. This is a major security vulnerability. ROOT CAUSE: The backend endpoint /items/{item_id}/value (line 384-388 in server.py) does NOT check if the item has advance_mode enabled. It returns the decrypted value directly. The endpoint should reject requests for advance mode items and require clients to use /items/{item_id}/advance-reveal instead. FRONTEND CODE (App.js line 175): The reveal function checks for advance_mode and should show the prompt, but the backend is bypassing this by returning the value anyway. FIX NEEDED: Add advance_mode check in backend /items/{item_id}/value endpoint to reject requests for advance mode items."
+      - working: "NA"
+        agent: "main"
+        comment: "Implemented stricter Advance Mode enforcement: reveal, copy, edit, delete, TOTP, share, and bulk delete now require passphrase-backed access or are blocked. UI prompts every time for Advance Mode actions. Needs formal retesting."
 
   - task: "Basic Regression - Normal Items"
     implemented: true
@@ -186,8 +189,8 @@ frontend:
 
 backend:
   - task: "Advance Mode Security - /items/{item_id}/value endpoint"
-    implemented: false
-    working: false
+    implemented: true
+    working: "NA"
     file: "/app/backend/server.py"
     stuck_count: 0
     priority: "critical"
@@ -196,6 +199,9 @@ backend:
       - working: false
         agent: "testing"
         comment: "CRITICAL SECURITY BUG: The /items/{item_id}/value endpoint (lines 384-388) does NOT check if an item has advance_mode enabled. It returns the decrypted value for ANY item, bypassing the advance mode passphrase protection. This completely defeats the purpose of Advance Mode. The endpoint should check if doc.get('advance_mode') is True and raise HTTPException(403, 'This item requires advance passphrase authentication. Use /items/{item_id}/advance-reveal endpoint.') The /items/{item_id}/advance-reveal endpoint (lines 444-467) is correctly implemented with passphrase verification, lockout after 4 failed attempts, and 3-day lock. But it's useless if the regular /value endpoint bypasses it."
+      - working: "NA"
+        agent: "main"
+        comment: "Backend now blocks normal /value for Advance Mode, requires X-Advance-Passphrase for update/delete/TOTP, blocks protected bulk delete/share, and blocks public share reveal for protected items. Self-tested via API. Needs formal retesting."
 
 metadata:
   created_by: "testing_agent"
@@ -209,6 +215,9 @@ test_plan:
   current_focus:
     - "Advance Mode Gating - All Actions"
     - "Advance Mode Security - /items/{item_id}/value endpoint"
+    - "Conditional Crypto Type Pass login"
+    - "Hardcore Mode deletion limits"
+    - "Remove View Crypto Pass button"
   stuck_tasks: []
   test_all: true
   test_priority: "high_first"
@@ -267,3 +276,32 @@ agent_communication:
       3. Verify wrong passphrase shows error and doesn't reveal value
       4. Verify correct passphrase allows access
       5. Verify delete action also requires passphrase (mentioned in requirements)
+
+  - agent: "main"
+    message: |
+      SECURITY FIX IMPLEMENTED - READY FOR RETEST
+
+      Changes made:
+      - Crypto Type Pass login remains conditional: after birthday verification, Layer 3 quiz appears only when Layer 3 is enabled.
+      - Removed Settings "View My 20 Passwords" button; Export Crypto Pass remains for offline copy.
+      - Backend one-time Crypto Pass view enforced; export still allowed.
+      - Hardcore Mode fixed so configured limits trigger immediate account/vault deletion instead of being hidden behind normal temporary lockout.
+      - Advance Mode strengthened across backend and UI: normal value endpoint blocks, update/delete/TOTP require passphrase header, protected share and bulk delete are blocked.
+
+      Self-test completed:
+      - python -m py_compile backend/server.py passed
+      - yarn build passed with existing React hook dependency warnings only
+      - API security smoke checks passed for conditional Crypto Pass status, Advance Mode protection, and Hardcore deletion
+      - UI smoke test passed: Settings opens and l3-view-btn count is 0
+
+  - agent: "testing"
+    message: |
+      ITERATION 12 FORMAL TESTING COMPLETE
+
+      Core requested flows passed on preview UI and backend tests: Advance Mode prompts, non-Advance regression behavior, conditional Crypto Type Pass login behavior, Settings removal of l3-view-btn, Export Crypto Pass present, desktop/mobile settings access, and Hardcore behavior. Backend targeted suite had 6/7 pass externally; only failure was credentialed CORS preflight due to preview edge returning wildcard OPTIONS headers.
+
+  - agent: "main"
+    message: |
+      ITERATION 12 CORS FOLLOW-UP
+
+      Verified backend app CORS directly at localhost:8001 returns explicit Access-Control-Allow-Origin and access-control-allow-credentials=true. Re-ran /app/backend/tests/test_iteration12_advance_hardcore_auth.py with REACT_APP_BACKEND_URL=http://localhost:8001 and all 7/7 tests passed. Support confirmed external preview OPTIONS wildcard behavior is expected preview edge behavior and cannot be fixed in app code.
