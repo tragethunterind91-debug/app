@@ -48,8 +48,23 @@ Build a website for saving passwords/values with tight security (TopPass5). User
 - Smart Fill button for items with URLs (copies password + opens website)
 - Browser Credential Management API integration (saves login to browser's password manager)
 - Prominent "Share" labeled button on vault items
+- Password Strength Meter in add/edit value field with weak/fair/strong color feedback
+- Settings Dark/Light theme switcher with preference persistence
+- Settings Auto-Lock Timer options: 1, 5, 15, 30 minutes for PIN Lock inactivity
+- Settings Login History showing the last 5 successful login events with timestamp and device info
+- Auth screen “+” quick toggle between login/register and readable wrong email/password errors
+- Auth hardening: httpOnly access cookie set alongside JWT response, global 5-failure temporary lockout, backend credentialed CORS configuration, admin seed password refresh
+
+## Latest Verification — 2026-09-03
+- `python -m py_compile backend/server.py` passed
+- `yarn build` passed with one existing React hook dependency warning in `App.js`
+- Public API sanity checks passed for wrong-password error, admin birthday login, login history, auth cookie, and brute-force lockout
+- `/app/backend/tests/test_iteration11_regression.py` passed locally: 15/15 with `REACT_APP_BACKEND_URL=http://localhost:8001`, `MONGO_URL`, and `DB_NAME`
+- Testing agent iteration 11 verified requested frontend flows and Advance Mode/L3 regression; its external public OPTIONS CORS check remains platform-edge controlled, while backend localhost CORS now returns explicit origin + credentials
 
 ## Backlog
-- P1: Google Ad Manager tags (waiting for user code)
+- P1: Continue remaining vault/security backlog: folders/tags, favorites, bulk actions, password history, duplicate detector, CSV import/export polishing
+- P1: Add session management, two-device alerts, password expiry reminders, onboarding tour, dashboard stats
+- P1: Premium tiers + Google Ad Manager tags (Stripe playbook required before implementation; Ad Manager waiting for user code)
 - P2: Secure Share links re-evaluation
 - P3: PostgreSQL migration (postponed)

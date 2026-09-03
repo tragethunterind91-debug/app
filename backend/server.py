@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Header, Request
+from fastapi import FastAPI, APIRouter, HTTPException, Header, Request, Response
 from fastapi.responses import RedirectResponse
 from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
@@ -66,10 +66,17 @@ class HardcoreSettings(BaseModel):
     max_login_fails: int = Field(default=16, ge=4, le=100)
     max_daily_tries: int = Field(default=4, ge=1, le=20)
     max_layer3_fails: int = Field(default=8, ge=1, le=50)
+class LoginHistoryEvent(BaseModel):
+    id: str
+    ts: str
+    device: str
+    ip: str = ''
 
 def token_for(user, stage='full'):
     is_admin = user.get('email','') == os.environ.get('ADMIN_EMAIL','__none__')
     return jwt.encode({'sub': user['id'], 'email': user['email'], 'name': user.get('name',''), 'is_admin': is_admin, 'stage': stage, 'exp': datetime.now(timezone.utc) + timedelta(hours=12)}, JWT_SECRET, algorithm='HS256')
+def set_auth_cookie(response: Response, token: str):
+    response.set_cookie(key='access_token', value=token, httponly=True, secure=True, samesite='none', max_age=12*60*60, path='/')
 def auth_user(authorization, require_full=True):
     if not authorization or not authorization.startswith('Bearer '): raise HTTPException(401, 'Please sign in again')
     try:
@@ -92,11 +99,30 @@ def safe_item(doc):
 async def log_event(user_id: str, action: str, detail: str = ''):
     try: await db.audit.insert_one({'user_id':user_id,'action':action,'detail':detail,'ts':datetime.now(timezone.utc).isoformat()})
     except Exception: pass
+def describe_device(user_agent: str) -> str:
+    ua = (user_agent or '').lower()
+    browser = 'Browser'
+    if 'edg/' in ua: browser = 'Microsoft Edge'
+    elif 'chrome/' in ua and 'chromium' not in ua: browser = 'Chrome'
+    elif 'safari/' in ua and 'chrome/' not in ua: browser = 'Safari'
+    elif 'firefox/' in ua: browser = 'Firefox'
+    os_name = 'Unknown device'
+    if 'iphone' in ua: os_name = 'iPhone'
+    elif 'ipad' in ua: os_name = 'iPad'
+    elif 'android' in ua: os_name = 'Android'
+    elif 'windows' in ua: os_name = 'Windows'
+    elif 'mac os' in ua or 'macintosh' in ua: os_name = 'macOS'
+    elif 'linux' in ua: os_name = 'Linux'
+    return f'{browser} on {os_name}'
+async def record_login_history(user_id: str, request: Request):
+    forwarded = request.headers.get('x-forwarded-for', '')
+    ip = forwarded.split(',')[0].strip() if forwarded else (request.client.host if request.client else '')
+    await db.login_history.insert_one({'id':str(uuid.uuid4()),'user_id':user_id,'ts':datetime.now(timezone.utc).isoformat(),'device':describe_device(request.headers.get('user-agent','')),'ip':ip})
 @router.get('/')
 async def root(): return {'message': 'CryptonVault API'}
 
 @router.post('/auth/register')
-async def register(data: Credentials):
+async def register(data: Credentials, request: Request, response: Response):
     if await db.users.find_one({'email': data.email.lower()}): raise HTTPException(409, 'An account already exists')
     if not data.birthday: raise HTTPException(400, 'Birthday is required')
     l3_passwords = gen_l3_passwords(20, 5)
@@ -115,13 +141,30 @@ async def register(data: Credentials):
         'created_at': datetime.now(timezone.utc).isoformat()
     }
     await db.users.insert_one(user)
-    return {'token': token_for(user), 'user': public_user(user)}
+    await record_login_history(user['id'], request)
+    token = token_for(user)
+    set_auth_cookie(response, token)
+    return {'token': token, 'user': public_user(user)}
 
 @router.post('/auth/login')
-async def login(data: Credentials):
+async def login(data: Credentials, request: Request, response: Response):
     user = await db.users.find_one({'email': data.email.lower()}, {'_id': 0})
     if not user or not user.get('password'):
         raise HTTPException(401, 'Email or password is incorrect')
+    fl = user.get('failed_logins', {})
+    lock_until = fl.get('lock_until')
+    if lock_until:
+        try:
+            lock_dt = datetime.fromisoformat(lock_until)
+            if lock_dt > datetime.now(timezone.utc):
+                mins = max(1, int((lock_dt - datetime.now(timezone.utc)).total_seconds() // 60) + 1)
+                raise HTTPException(423, f'Account temporarily locked. Try again in {mins} minute(s).')
+            await db.users.update_one({'id': user['id']}, {'$set': {'failed_logins.count': 0, 'failed_logins.daily_count': 0}, '$unset': {'failed_logins.lock_until': ''}})
+            user = await db.users.find_one({'id': user['id']}, {'_id': 0})
+        except HTTPException:
+            raise
+        except Exception:
+            pass
     # --- Hardcore mode: check if account should be deleted ---
     if user.get('hardcore_enabled'):
         fl = user.get('failed_logins', {})
@@ -145,13 +188,17 @@ async def login(data: Credentials):
     if has_birthday:
         # Return stage token - user must verify birthday next
         stage_token = token_for(user, stage='birthday')
+        set_auth_cookie(response, stage_token)
         await log_event(user['id'], 'LOGIN_STAGE1', data.email.lower())
         return {'stage': 'birthday', 'token': stage_token, 'user': public_user(user), 'needs_birthday': True, 'needs_layer3': has_l3}
     # No birthday set (legacy user) - grant full access
     await _reset_login_fails(user)
     await db.users.update_one({'id': user['id']}, {'$set': {'last_seen': datetime.now(timezone.utc).isoformat()}})
+    await record_login_history(user['id'], request)
     await log_event(user['id'], 'LOGIN', data.email.lower())
-    return {'stage': 'complete', 'token': token_for(user), 'user': public_user(user)}
+    token = token_for(user)
+    set_auth_cookie(response, token)
+    return {'stage': 'complete', 'token': token, 'user': public_user(user)}
 
 async def _track_login_fail(user):
     fl = user.get('failed_logins', {'count': 0, 'daily_count': 0, 'last_fail_date': None, 'consecutive_days': 0, 'layer3_fails': 0})
@@ -170,6 +217,8 @@ async def _track_login_fail(user):
         fl['daily_count'] = 1
         fl['last_fail_date'] = today
     fl['count'] = fl.get('count', 0) + 1
+    if fl['count'] >= 5:
+        fl['lock_until'] = (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat()
     await db.users.update_one({'id': user['id']}, {'$set': {'failed_logins': fl}})
     await log_event(user['id'], 'LOGIN_FAIL', f"count={fl['count']}, days={fl['consecutive_days']}")
 
@@ -177,7 +226,7 @@ async def _reset_login_fails(user):
     await db.users.update_one({'id': user['id']}, {'$set': {'failed_logins': {'count': 0, 'daily_count': 0, 'last_fail_date': None, 'consecutive_days': 0, 'layer3_fails': user.get('failed_logins', {}).get('layer3_fails', 0)}}})
 
 @router.post('/auth/verify-birthday')
-async def verify_birthday(data: BirthdayVerify, authorization: str | None = Header(default=None)):
+async def verify_birthday(data: BirthdayVerify, request: Request, response: Response, authorization: str | None = Header(default=None)):
     claims = auth_user(authorization, require_full=False)
     user = await db.users.find_one({'id': claims['sub']}, {'_id': 0})
     if not user: raise HTTPException(404, 'User not found')
@@ -189,17 +238,21 @@ async def verify_birthday(data: BirthdayVerify, authorization: str | None = Head
         # Need L3 quiz next
         quiz_indices = sorted(random.sample(range(20), 3))
         stage_token = token_for(user, stage='layer3')
+        set_auth_cookie(response, stage_token)
         await db.users.update_one({'id': user['id']}, {'$set': {'pending_quiz': quiz_indices}})
         await log_event(user['id'], 'BIRTHDAY_VERIFIED', user['email'])
         return {'stage': 'layer3', 'token': stage_token, 'quiz_indices': quiz_indices}
     # Birthday verified, no L3 - grant full access
     await _reset_login_fails(user)
     await db.users.update_one({'id': user['id']}, {'$set': {'last_seen': datetime.now(timezone.utc).isoformat()}})
+    await record_login_history(user['id'], request)
     await log_event(user['id'], 'LOGIN', user['email'])
-    return {'stage': 'complete', 'token': token_for(user), 'user': public_user(user)}
+    token = token_for(user)
+    set_auth_cookie(response, token)
+    return {'stage': 'complete', 'token': token, 'user': public_user(user)}
 
 @router.post('/auth/verify-layer3')
-async def verify_layer3(data: L3QuizAnswer, authorization: str | None = Header(default=None)):
+async def verify_layer3(data: L3QuizAnswer, request: Request, response: Response, authorization: str | None = Header(default=None)):
     claims = auth_user(authorization, require_full=False)
     user = await db.users.find_one({'id': claims['sub']}, {'_id': 0})
     if not user: raise HTTPException(404, 'User not found')
@@ -227,8 +280,17 @@ async def verify_layer3(data: L3QuizAnswer, authorization: str | None = Header(d
     # All correct - grant full access
     await _reset_login_fails(user)
     await db.users.update_one({'id': user['id']}, {'$set': {'last_seen': datetime.now(timezone.utc).isoformat(), 'failed_logins.layer3_fails': 0, 'pending_quiz': []}})
+    await record_login_history(user['id'], request)
     await log_event(user['id'], 'LOGIN', user['email'])
-    return {'stage': 'complete', 'token': token_for(user), 'user': public_user(user)}
+    token = token_for(user)
+    set_auth_cookie(response, token)
+    return {'stage': 'complete', 'token': token, 'user': public_user(user)}
+
+@router.get('/auth/login-history', response_model=list[LoginHistoryEvent])
+async def login_history(authorization: str | None = Header(default=None)):
+    claims = auth_user(authorization)
+    docs = await db.login_history.find({'user_id': claims['sub']}, {'_id': 0, 'user_id': 0}).sort('ts', -1).to_list(5)
+    return docs
 
 @router.post('/auth/toggle-disclaimer')
 async def toggle_disclaimer(data: dict, authorization: str | None = Header(default=None)):
@@ -562,7 +624,14 @@ async def reset_password(data: dict):
     await db.recovery.delete_one({'code':token})
     return {'message':'Password reset successfully. Please sign in with your new password.'}
 
-app=FastAPI(title='TopPass5 API'); app.include_router(router); app.add_middleware(SessionMiddleware, secret_key=JWT_SECRET, same_site='lax', https_only=True); app.add_middleware(CORSMiddleware, allow_credentials=True, allow_origins=os.environ.get('CORS_ORIGINS','*').split(','), allow_methods=['*'], allow_headers=['*'])
+cors_origins=[o.strip() for o in os.environ['CORS_ORIGINS'].split(',') if o.strip()]
+cors_kwargs={'allow_credentials':True,'allow_methods':['*'],'allow_headers':['*']}
+if '*' in cors_origins:
+    cors_kwargs['allow_origins']=[]
+    cors_kwargs['allow_origin_regex']='.*'
+else:
+    cors_kwargs['allow_origins']=cors_origins
+app=FastAPI(title='TopPass5 API'); app.include_router(router); app.add_middleware(SessionMiddleware, secret_key=JWT_SECRET, same_site='lax', https_only=True); app.add_middleware(CORSMiddleware, **cors_kwargs)
 @app.on_event('startup')
 async def seed_admin():
     admin_email=os.environ.get('ADMIN_EMAIL',''); admin_pass=os.environ.get('ADMIN_PASS',''); admin_birthday=os.environ.get('ADMIN_BIRTHDAY','')
@@ -585,6 +654,8 @@ async def seed_admin():
         else:
             # Update existing admin: add birthday if missing and set correct fields
             updates = {}
+            if not pwd.verify(admin_pass, existing.get('password','')):
+                updates['password'] = pwd.hash(admin_pass)
             if admin_birthday and not existing.get('birthday_hash'):
                 updates['birthday_hash'] = hash_birthday(admin_birthday)
             if not existing.get('layer3_passwords_enc'):

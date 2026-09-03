@@ -1,6 +1,6 @@
 import {useEffect, useMemo, useRef, useState} from 'react';
 import axios from 'axios';
-import {ShieldCheck, LockKeyhole, Plus, Search, Eye, EyeOff, Copy, Download, Trash2, LogOut, KeyRound, ArrowUpRight, X, Check, RefreshCw, Pencil, Wand2, Upload, Share2, Activity, ShieldAlert, Gauge, Timer, ExternalLink, Lock, HelpCircle, Settings, Calendar, Shield, AlertTriangle, ToggleLeft, ToggleRight, FileText, Skull, Menu} from 'lucide-react';
+import {ShieldCheck, LockKeyhole, Plus, Search, Eye, EyeOff, Copy, Download, Trash2, LogOut, KeyRound, ArrowUpRight, X, Check, RefreshCw, Pencil, Wand2, Upload, Share2, Activity, ShieldAlert, Gauge, Timer, ExternalLink, Lock, HelpCircle, Settings, Calendar, Shield, AlertTriangle, ToggleLeft, ToggleRight, FileText, Skull, Menu, Sun, Moon, History, Monitor} from 'lucide-react';
 import './App.css';
 import './brand.css';
 import {Toaster, toast} from 'sonner';
@@ -13,9 +13,12 @@ const client=axios.create({baseURL:API});
 const authHeader=()=>({headers:{Authorization:`Bearer ${localStorage.getItem('vault_token')}`} });
 const copyText=async(text)=>{try{await navigator.clipboard.writeText(text)}catch{const a=document.createElement('textarea');a.value=text;document.body.appendChild(a);a.select();document.execCommand('copy');a.remove()}};
 const hashPin=async(p)=>{const buf=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(p+'tp5-pin-salt'));return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('')};
+const formatApiError=detail=>{if(!detail)return 'Something went wrong. Please try again.';if(typeof detail==='string')return detail;if(Array.isArray(detail))return detail.map(e=>e?.msg||String(e)).join(' ');return detail?.msg||String(detail)};
+const strengthOf=value=>{let s=0;if(!value)return {label:'Empty',level:'empty',score:0};if(value.length>=8)s++;if(value.length>=12)s++;if(/[A-Z]/.test(value)&&/[a-z]/.test(value))s++;if(/\d/.test(value))s++;if(/[^A-Za-z0-9]/.test(value))s++;if(s<=2)return {label:'Weak',level:'weak',score:28};if(s<=4)return {label:'Fair',level:'fair',score:62};return {label:'Strong',level:'strong',score:100}};
 
 function Auth({onLogin}){
   const [mode,setMode]=useState('login');const [email,setEmail]=useState('');const [password,setPassword]=useState('');const [busy,setBusy]=useState(false);
+  const [authError,setAuthError]=useState('');
   // Multi-stage login
   const [loginStage,setLoginStage]=useState(null);
   const [stageToken,setStageToken]=useState(null);
@@ -30,7 +33,7 @@ function Auth({onLogin}){
   const checkLoginStatus=async(em)=>{if(!em||mode!=='login')return;try{const r=await client.get(`/auth/login-status?email=${encodeURIComponent(em)}`);setLoginStatus(r.data)}catch{setLoginStatus(null)}};
 
   const submit=async(e)=>{
-    e.preventDefault();setBusy(true);
+    e.preventDefault();setBusy(true);setAuthError('');
     try{
       if(mode==='register'){
         if(!regBirthday){toast.error('Birthday is required');setBusy(false);return}
@@ -52,7 +55,7 @@ function Auth({onLogin}){
           onLogin(r.data.user);
         }
       }
-    }catch(e){toast.error(e.response?.data?.detail||'Could not sign in')}finally{setBusy(false)}
+    }catch(e){const msg=formatApiError(e.response?.data?.detail)||'Could not sign in';setAuthError(msg);toast.error(msg)}finally{setBusy(false)}
   };
 
   const submitBirthday=async()=>{
@@ -64,7 +67,7 @@ function Auth({onLogin}){
       }else{
         localStorage.setItem('vault_token',r.data.token);onLogin(r.data.user);setLoginStage(null);
       }
-    }catch(e){toast.error(e.response?.data?.detail||'Birthday verification failed')}finally{setBusy(false)}
+    }catch(e){const msg=formatApiError(e.response?.data?.detail)||'Birthday verification failed';setAuthError(msg);toast.error(msg)}finally{setBusy(false)}
   };
 
   const submitLayer3Quiz=async()=>{
@@ -72,7 +75,7 @@ function Auth({onLogin}){
     try{
       const r=await client.post('/auth/verify-layer3',{answers:quizAnswers},{headers:{Authorization:`Bearer ${stageToken}`}});
       localStorage.setItem('vault_token',r.data.token);onLogin(r.data.user);setLoginStage(null);
-    }catch(e){toast.error(e.response?.data?.detail||'Layer 3 verification failed')}finally{setBusy(false)}
+    }catch(e){const msg=formatApiError(e.response?.data?.detail)||'Layer 3 verification failed';setAuthError(msg);toast.error(msg)}finally{setBusy(false)}
   };
 
   // Birthday verification stage
@@ -108,7 +111,7 @@ function Auth({onLogin}){
         <div className="auth-card">
           <div className="mobile-brand brand"><img src="/toppass5-logo-sm.jpeg" alt="TopPass5" className="brand-logo-mark"/></div>
           <p className="eyebrow">SECURE ACCESS</p>
-          <h2>{mode==='login'?'Welcome back':'Create your vault'}</h2>
+          <div className="auth-title-row"><h2>{mode==='login'?'Welcome back':'Create your vault'}</h2><button type="button" className="auth-plus-btn" data-testid="auth-plus-toggle" onClick={()=>{setAuthError('');setMode(mode==='login'?'register':'login')}} title={mode==='login'?'Create account':'Back to login'}>{mode==='login'?<Plus size={18}/>:<Lock size={16}/>}</button></div>
           <p className="muted">{mode==='login'?'Your private command center is waiting.':'Start protecting what matters in under a minute.'}</p>
           <form onSubmit={submit} data-testid="auth-form">
             <label>Email<input data-testid="auth-email-input" type="email" value={email} onChange={e=>setEmail(e.target.value)} onBlur={e=>checkLoginStatus(e.target.value)} required placeholder="you@example.com"/></label>
@@ -116,9 +119,10 @@ function Auth({onLogin}){
             {mode==='login'&&loginStatus&&loginStatus.hardcore&&<div className="login-attempts-warn" data-testid="login-attempts-warning"><AlertTriangle size={14}/><div><b>Hardcore Mode Active</b><p>Today: {loginStatus.daily_used}/{loginStatus.daily_limit} tries used &bull; Total fails: {loginStatus.total_fails}/{loginStatus.total_limit} &bull; Consecutive days: {loginStatus.consecutive_days}/{loginStatus.days_limit}</p></div></div>}
             {mode==='register'&&<><label>Birthday <span className="birthday-warn">Please enter correctly — used for login verification</span><input data-testid="reg-birthday-input" type="date" value={regBirthday} onChange={e=>setRegBirthday(e.target.value)} required/></label><label>Confirm Birthday<input data-testid="reg-birthday-confirm" type="date" value={regBirthdayConfirm} onChange={e=>setRegBirthdayConfirm(e.target.value)} required/></label></>}
             {mode==='login'&&<p className="birthday-login-hint" data-testid="birthday-hint">You will need your birthday to complete sign-in.</p>}
+            {authError&&<div className="auth-error-box" data-testid="auth-error-message"><AlertTriangle size={15}/><span>{authError}</span></div>}
             <button className="primary wide" data-testid="auth-submit-button" disabled={busy}>{busy?'Securing…':mode==='login'?'Unlock vault':'Create vault'} <ArrowUpRight size={17}/></button>
           </form>
-          <button className="link-btn" data-testid="auth-mode-toggle" onClick={()=>setMode(mode==='login'?'register':'login')}>{mode==='login'?"I don't have an account":"I already have an account"}</button>
+          <button className="link-btn" data-testid="auth-mode-toggle" onClick={()=>{setAuthError('');setMode(mode==='login'?'register':'login')}}>{mode==='login'?"I don't have an account":"I already have an account"}</button>
         </div>
       </section>
       <Toaster theme="dark"/>
@@ -130,6 +134,7 @@ function Vault({user,onLogout}){
   const inactivityRef=useRef(null);
   const [items,setItems]=useState([]); const [query,setQuery]=useState(''); const [showForm,setShowForm]=useState(false); const [editing,setEditing]=useState(null); const [visible,setVisible]=useState({}); const [values,setValues]=useState({}); const [form,setForm]=useState({name:'',value:'',category:'Secret',totp_secret:'',url:'',advance_mode:false,advance_passphrase:''}); const [showGen,setShowGen]=useState(false); const [genOpts,setGenOpts]=useState({length:16,upper:true,lower:true,nums:true,syms:false}); const [genPwd,setGenPwd]=useState(''); const [cat,setCat]=useState('All'); const [shareModal,setShareModal]=useState(null); const [showAudit,setShowAudit]=useState(false); const [auditLogs,setAuditLogs]=useState([]); const [secReport,setSecReport]=useState(null); const [showSec,setShowSec]=useState(false); const [categories,setCategories]=useState(['Login','API key','Secret','Secure note','Wi-Fi','Bank']); const [breachBadge,setBreachBadge]=useState(0); const [breachChecking,setBreachChecking]=useState(false); const [breachScanned,setBreachScanned]=useState(false); const [showSharePicker,setShowSharePicker]=useState(null); const [showAdvancePrompt,setShowAdvancePrompt]=useState(null); const [advanceInput,setAdvanceInput]=useState(''); const [showShares,setShowShares]=useState(false); const [activeShares,setActiveShares]=useState([]); const [showSettings,setShowSettings]=useState(false); const [showHelp,setShowHelp]=useState(false); const [settings,setSettings]=useState({autofill:true});
   const [showPinLock,setShowPinLock]=useState(false); const [pinInput,setPinInput]=useState(''); const [pinError,setPinError]=useState(''); const [pinEnabled,setPinEnabled]=useState(!!localStorage.getItem('vault_pin_hash')); const [setupPinMode,setSetupPinMode]=useState(false); const [setupPinValue,setSetupPinValue]=useState(''); const [setupPinConfirm,setSetupPinConfirm]=useState(''); const [setupPinErr,setSetupPinErr]=useState('');
+  const [loginHistory,setLoginHistory]=useState([]); const [historyLoaded,setHistoryLoaded]=useState(false);
   const [mobileNavOpen,setMobileNavOpen]=useState(false);
   const [showItemProps,setShowItemProps]=useState(null);
   // Layer 3, Hardcore, Disclaimer states
@@ -150,16 +155,20 @@ function Vault({user,onLogout}){
   const [bdaySetupConfirm,setBdaySetupConfirm]=useState('');
   const [hasBirthday,setHasBirthday]=useState(user.has_birthday||false);
   const [l3Viewed,setL3Viewed]=useState(user.l3_viewed||false);
+  const strength=strengthOf(form.value||'');
+
+  useEffect(()=>{document.documentElement.setAttribute('data-theme',settings.theme||localStorage.getItem('tp5_theme')||'dark')},[settings.theme]);
 
   // PIN inactivity timer
   useEffect(()=>{
     if(!pinEnabled)return;
-    const reset=()=>{if(inactivityRef.current)clearTimeout(inactivityRef.current);inactivityRef.current=setTimeout(()=>setShowPinLock(true),5*60*1000)};
+    const minutes=Number(settings.autoLockMinutes||localStorage.getItem('tp5_auto_lock')||5);
+    const reset=()=>{if(inactivityRef.current)clearTimeout(inactivityRef.current);inactivityRef.current=setTimeout(()=>setShowPinLock(true),minutes*60*1000)};
     const events=['mousemove','keydown','click','touchstart'];
     events.forEach(e=>document.addEventListener(e,reset));
     reset();
     return()=>{events.forEach(e=>document.removeEventListener(e,reset));if(inactivityRef.current)clearTimeout(inactivityRef.current)};
-  },[pinEnabled]);
+  },[pinEnabled,settings.autoLockMinutes]);
 
   // Auto-verify PIN when 4 digits entered
   useEffect(()=>{
@@ -172,7 +181,7 @@ function Vault({user,onLogout}){
     })()
   },[pinInput]);
 
-  const load=()=>{client.get('/items',authHeader()).then(r=>{setItems(r.data);setTimeout(()=>runBackgroundBreachCheck(r.data),800)}).catch(()=>onLogout()); client.get('/preferences',authHeader()).then(r=>{if(r.data.categories)setCategories(r.data.categories);if(typeof r.data.autofill==='boolean')setSettings(s=>({...s,autofill:r.data.autofill}))}).catch(()=>{})}; useEffect(()=>{load()},[]);
+  const load=()=>{client.get('/items',authHeader()).then(r=>{setItems(r.data);setTimeout(()=>runBackgroundBreachCheck(r.data),800)}).catch(()=>onLogout()); client.get('/preferences',authHeader()).then(r=>{if(r.data.categories)setCategories(r.data.categories);setSettings(s=>({...s,autofill:typeof r.data.autofill==='boolean'?r.data.autofill:s.autofill,theme:r.data.theme||localStorage.getItem('tp5_theme')||'dark',autoLockMinutes:r.data.autoLockMinutes||Number(localStorage.getItem('tp5_auto_lock'))||5}))}).catch(()=>{})}; useEffect(()=>{load()},[]);
 
   const filtered=useMemo(()=>items.filter(i=>i.name.toLowerCase().includes(query.toLowerCase())&&(cat==='All'||i.category===cat)),[items,query,cat]);
 
@@ -205,6 +214,9 @@ function Vault({user,onLogout}){
   const loadSecReport=async()=>{try{const r=await client.get('/security/report',authHeader());setSecReport(r.data);setShowSec(true)}catch{toast.error('Could not load report')}};
   const saveCategory=async newCat=>{if(newCat&&!categories.includes(newCat)){const updated=[...categories,newCat];setCategories(updated);client.put('/preferences',{categories:updated},authHeader()).catch(()=>{})}};
   const saveSettingsPref=async(newSettings)=>{setSettings(newSettings);client.put('/preferences',newSettings,authHeader()).catch(()=>{})};
+  const saveTheme=theme=>{localStorage.setItem('tp5_theme',theme);saveSettingsPref({...settings,theme})};
+  const saveAutoLock=minutes=>{localStorage.setItem('tp5_auto_lock',String(minutes));saveSettingsPref({...settings,autoLockMinutes:minutes})};
+  const loadLoginHistory=async()=>{try{const r=await client.get('/auth/login-history',authHeader());setLoginHistory(r.data);setHistoryLoaded(true)}catch{toast.error('Could not load login history')}};
 
   const importVault=async(e)=>{const file=e.target.files[0];if(!file)return;try{const raw=JSON.parse(await file.text());const arr=Array.isArray(raw)?raw:[raw];const valid=arr.filter(x=>x.name&&x.value).map(x=>({name:x.name,value:x.value,category:x.category||'Secret'}));if(!valid.length){toast.error('No valid items found in file');e.target.value='';return}await client.post('/items/import',{items:valid},authHeader());toast.success(`${valid.length} item(s) imported`);load()}catch{toast.error('Import failed — check file format')}finally{e.target.value=''}};
 
@@ -332,7 +344,7 @@ function Vault({user,onLogout}){
     </main>
 
     {/* Item Form Modal */}
-    {showForm&&<div className="modal-backdrop"><form className="modal item-form-modal" onSubmit={save} data-testid="item-form"><button type="button" className="modal-close icon-btn" data-testid="close-item-modal" onClick={()=>{setShowForm(false);setEditing(null);setForm({name:'',value:'',category:'Secret',totp_secret:'',url:'',advance_mode:false,advance_passphrase:''})}}><X/></button><p className="eyebrow">{editing?'EDIT VALUE':'NEW VALUE'}</p><h2>{editing?'Update protected value':'Add to your vault'}</h2><label>Name<input data-testid="item-name-input" value={form.name} onChange={e=>setForm({...form,name:e.target.value})} required placeholder="e.g. Wi-Fi password"/></label><label>Value<div className="gen-row"><textarea data-testid="item-value-input" autoComplete={autoComp} value={form.value} onChange={e=>setForm({...form,value:e.target.value})} required placeholder="Your secret value" rows="4"/><button type="button" className="gen-inline" data-testid="generate-inline-button" onClick={()=>setForm({...form,value:mkPwd(genOpts)})} title="Generate password"><Wand2 size={14}/> Generate</button></div></label><label>Category<input list="cat-opts" data-testid="item-category-input" value={form.category} onChange={e=>setForm({...form,category:e.target.value})} placeholder="e.g. Login, API key…"/><datalist id="cat-opts">{categories.map(c=><option key={c} value={c}/>)}</datalist></label><label>Authenticator Secret (TOTP) — optional<input data-testid="item-totp-input" type="text" value={form.totp_secret||''} onChange={e=>setForm({...form,totp_secret:e.target.value})} placeholder="Base32 secret e.g. JBSWY3DPEHPK3PXP"/></label><label>Website URL — optional<input data-testid="item-url-input" type="url" value={form.url||''} onChange={e=>setForm({...form,url:e.target.value})} placeholder="https://example.com"/></label><div className="advance-toggle"><label className="advance-check"><input type="checkbox" data-testid="advance-mode-toggle" checked={form.advance_mode||false} onChange={e=>setForm({...form,advance_mode:e.target.checked,advance_passphrase:''})}/><Lock size={14}/> Enable Advance Mode</label>{form.advance_mode&&<label className="advance-pass">Secret Passphrase (you must remember this — no recovery)<input data-testid="advance-passphrase-input" type="password" autoComplete="new-password" value={form.advance_passphrase||''} onChange={e=>setForm({...form,advance_passphrase:e.target.value})} placeholder="e.g. elephant892"/></label>}</div><button className="primary wide" data-testid="save-item-button">{editing?'Save changes':'Encrypt & save'} <LockKeyhole size={16}/></button></form></div>}
+    {showForm&&<div className="modal-backdrop"><form className="modal item-form-modal" onSubmit={save} data-testid="item-form"><button type="button" className="modal-close icon-btn" data-testid="close-item-modal" onClick={()=>{setShowForm(false);setEditing(null);setForm({name:'',value:'',category:'Secret',totp_secret:'',url:'',advance_mode:false,advance_passphrase:''})}}><X/></button><p className="eyebrow">{editing?'EDIT VALUE':'NEW VALUE'}</p><h2>{editing?'Update protected value':'Add to your vault'}</h2><label>Name<input data-testid="item-name-input" value={form.name} onChange={e=>setForm({...form,name:e.target.value})} required placeholder="e.g. Wi-Fi password"/></label><label>Value<div className="gen-row"><textarea data-testid="item-value-input" autoComplete={autoComp} value={form.value} onChange={e=>setForm({...form,value:e.target.value})} required placeholder="Your secret value" rows="4"/><button type="button" className="gen-inline" data-testid="generate-inline-button" onClick={()=>setForm({...form,value:mkPwd(genOpts)})} title="Generate password"><Wand2 size={14}/> Generate</button></div><div className="strength-meter" data-testid="password-strength-meter"><div className="strength-top"><span>Password strength</span><b className={`strength-${strength.level}`} data-testid="password-strength-label">{strength.label}</b></div><div className="strength-track"><div className={`strength-fill strength-${strength.level}`} data-testid="password-strength-bar" style={{width:`${strength.score}%`,backgroundColor:strength.level==='strong'?'var(--green)':strength.level==='fair'?'#f59e0b':strength.level==='weak'?'var(--red)':'transparent'}}/></div></div></label><label>Category<input list="cat-opts" data-testid="item-category-input" value={form.category} onChange={e=>setForm({...form,category:e.target.value})} placeholder="e.g. Login, API key…"/><datalist id="cat-opts">{categories.map(c=><option key={c} value={c}/>)}</datalist></label><label>Authenticator Secret (TOTP) — optional<input data-testid="item-totp-input" type="text" value={form.totp_secret||''} onChange={e=>setForm({...form,totp_secret:e.target.value})} placeholder="Base32 secret e.g. JBSWY3DPEHPK3PXP"/></label><label>Website URL — optional<input data-testid="item-url-input" type="url" value={form.url||''} onChange={e=>setForm({...form,url:e.target.value})} placeholder="https://example.com"/></label><div className="advance-toggle"><label className="advance-check"><input type="checkbox" data-testid="advance-mode-toggle" checked={form.advance_mode||false} onChange={e=>setForm({...form,advance_mode:e.target.checked,advance_passphrase:''})}/><Lock size={14}/> Enable Advance Mode</label>{form.advance_mode&&<label className="advance-pass">Secret Passphrase (you must remember this — no recovery)<input data-testid="advance-passphrase-input" type="password" autoComplete="new-password" value={form.advance_passphrase||''} onChange={e=>setForm({...form,advance_passphrase:e.target.value})} placeholder="e.g. elephant892"/></label>}</div><button className="primary wide" data-testid="save-item-button">{editing?'Save changes':'Encrypt & save'} <LockKeyhole size={16}/></button></form></div>}
 
     {/* Generator */}
     {showGen&&<div className="modal-backdrop"><div className="modal gen-modal" data-testid="generator-modal"><button type="button" className="modal-close icon-btn" data-testid="close-generator" onClick={()=>setShowGen(false)}><X/></button><p className="eyebrow">SECURITY TOOL</p><h2>Password Generator</h2><div className="gen-output" data-testid="generated-password">{genPwd||'—'}</div><div className="gen-controls"><label className="gen-option">Length: <b>{genOpts.length}</b><input type="range" min="8" max="64" value={genOpts.length} onChange={e=>{const o={...genOpts,length:+e.target.value};setGenOpts(o);setGenPwd(mkPwd(o))}}/></label><label className="gen-option"><input type="checkbox" checked={genOpts.upper} onChange={e=>{const o={...genOpts,upper:e.target.checked};setGenOpts(o);setGenPwd(mkPwd(o))}}/> A–Z Uppercase</label><label className="gen-option"><input type="checkbox" checked={genOpts.lower} onChange={e=>{const o={...genOpts,lower:e.target.checked};setGenOpts(o);setGenPwd(mkPwd(o))}}/> a–z Lowercase</label><label className="gen-option"><input type="checkbox" checked={genOpts.nums} onChange={e=>{const o={...genOpts,nums:e.target.checked};setGenOpts(o);setGenPwd(mkPwd(o))}}/> 0–9 Numbers</label><label className="gen-option"><input type="checkbox" checked={genOpts.syms} onChange={e=>{const o={...genOpts,syms:e.target.checked};setGenOpts(o);setGenPwd(mkPwd(o))}}/> !@# Symbols</label></div><div className="gen-actions"><button type="button" className="secondary" data-testid="regenerate-button" onClick={()=>setGenPwd(mkPwd(genOpts))}><RefreshCw size={15}/> Regenerate</button><button type="button" className="primary" data-testid="copy-generated-button" onClick={()=>{copyText(genPwd);toast.success('Password copied!')}}><Copy size={15}/> Copy</button></div></div></div>}
@@ -362,9 +374,13 @@ function Vault({user,onLogout}){
 
     {/* Settings Modal — Expanded */}
     {showSettings&&<div className="modal-backdrop"><div className="modal settings-modal" data-testid="settings-modal" style={{maxHeight:'88vh',overflowY:'auto'}}><button type="button" className="modal-close icon-btn" data-testid="close-settings" onClick={()=>setShowSettings(false)}><X/></button><p className="eyebrow">PREFERENCES</p><h2>Settings</h2><div className="settings-list">
+      <div className="settings-row" data-testid="theme-setting"><div className="settings-info"><b>Theme</b><p>Choose the vault look that feels best for this device.</p></div><div className="theme-toggle" role="group" aria-label="Theme"><button type="button" data-testid="theme-dark-button" className={settings.theme!=='light'?'active':''} onClick={()=>saveTheme('dark')}><Moon size={14}/> Dark</button><button type="button" data-testid="theme-light-button" className={settings.theme==='light'?'active':''} onClick={()=>saveTheme('light')}><Sun size={14}/> Light</button></div></div>
       <div className="settings-row" data-testid="autofill-setting"><div className="settings-info"><b>Browser Autofill</b><p>Allow browser to autofill and suggest saving vault values in forms.</p></div><label className="toggle-switch"><input type="checkbox" checked={settings.autofill} onChange={e=>saveSettingsPref({...settings,autofill:e.target.checked})}/><span className="toggle-slider"/></label></div>
-      <div className="settings-row" data-testid="pin-setting"><div className="settings-info"><b>Vault PIN Lock</b><p>Auto-locks vault after 5 min of inactivity.</p></div><label className="toggle-switch"><input type="checkbox" checked={pinEnabled} onChange={e=>{if(!e.target.checked){localStorage.removeItem('vault_pin_hash');setPinEnabled(false);setShowPinLock(false);setSetupPinMode(false);if(inactivityRef.current)clearTimeout(inactivityRef.current);toast.success('PIN lock disabled')}else setSetupPinMode(true)}}/><span className="toggle-slider"/></label></div>
+      <div className="settings-row" data-testid="pin-setting"><div className="settings-info"><b>Vault PIN Lock</b><p>Auto-locks vault after your selected inactivity timeout.</p></div><label className="toggle-switch"><input type="checkbox" checked={pinEnabled} onChange={e=>{if(!e.target.checked){localStorage.removeItem('vault_pin_hash');setPinEnabled(false);setShowPinLock(false);setSetupPinMode(false);if(inactivityRef.current)clearTimeout(inactivityRef.current);toast.success('PIN lock disabled')}else setSetupPinMode(true)}}/><span className="toggle-slider"/></label></div>
+      <div className="settings-row" data-testid="auto-lock-setting"><div className="settings-info"><b>Auto-Lock Timer</b><p>Lock the vault after inactivity when PIN Lock is enabled.</p></div><select data-testid="auto-lock-select" className="settings-select" value={settings.autoLockMinutes||5} onChange={e=>saveAutoLock(Number(e.target.value))}><option value="1">1 min</option><option value="5">5 min</option><option value="15">15 min</option><option value="30">30 min</option></select></div>
       {setupPinMode&&<div className="pin-setup-section"><p className="muted" style={{fontSize:'12px',margin:'0 0 10px'}}>Set your 4-digit PIN:</p><div className="pin-setup-row"><input type="password" maxLength="4" inputMode="numeric" data-testid="pin-setup-input" value={setupPinValue} onChange={e=>setSetupPinValue(e.target.value.replace(/\D/g,'').slice(0,4))} placeholder="1234" className="pin-input-field"/><input type="password" maxLength="4" inputMode="numeric" data-testid="pin-confirm-input" value={setupPinConfirm} onChange={e=>setSetupPinConfirm(e.target.value.replace(/\D/g,'').slice(0,4))} placeholder="Confirm" className="pin-input-field"/><button className="primary" data-testid="pin-confirm-btn" onClick={async()=>{if(setupPinValue.length!==4||setupPinValue!==setupPinConfirm){setSetupPinErr('PINs must be 4 digits and match');return}const h=await hashPin(setupPinValue);localStorage.setItem('vault_pin_hash',h);setPinEnabled(true);setSetupPinMode(false);setSetupPinValue('');setSetupPinConfirm('');setSetupPinErr('');toast.success('PIN lock enabled!')}}>Set PIN</button></div>{setupPinErr&&<p style={{color:'var(--red)',fontSize:'12px',marginTop:'6px'}}>{setupPinErr}</p>}</div>}
+      <div className="settings-divider"><span>LOGIN HISTORY</span></div>
+      <div className="settings-row login-history-panel" data-testid="login-history-setting"><div className="settings-info"><b><History size={14} style={{display:'inline',verticalAlign:'middle',marginRight:'6px'}}/>Last 5 Logins</b><p>Recent successful access events for this vault.</p>{historyLoaded?<div className="login-history-list" data-testid="login-history-list">{loginHistory.length?loginHistory.map((h,i)=><div className="login-history-item" key={h.id} data-testid={`login-history-${i}`}><Monitor size={13}/><span>{new Date(h.ts).toLocaleString()}</span><b>{h.device}</b></div>):<span className="muted-sm">No login history yet.</span>}</div>:null}</div><button type="button" className="secondary" data-testid="load-login-history" onClick={loadLoginHistory}>Load</button></div>
       <div className="settings-divider"><span>LAYER 2 — BIRTHDAY</span></div>
       {!hasBirthday?<div className="settings-row clickable" data-testid="birthday-setup-btn" onClick={()=>{setShowBirthdaySetup(true);setShowSettings(false)}}><div className="settings-info"><b>Set Birthday</b><p>Add Layer 2 protection. You'll verify your birthday on every login.</p></div><Calendar size={16} style={{color:'var(--green)',flexShrink:0}}/></div>
       :<div className="settings-row"><div className="settings-info"><b>Birthday Set</b><p>Layer 2 is active. You verify your birthday on every login.</p></div><Check size={16} style={{color:'var(--green)',flexShrink:0}}/></div>}
