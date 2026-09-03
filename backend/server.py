@@ -37,6 +37,9 @@ class Credentials(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8)
     birthday: str | None = None  # YYYY-MM-DD, required for register
+class CustomField(BaseModel):
+    key: str = Field(min_length=1, max_length=80)
+    value: str = Field(max_length=2000)
 class ItemIn(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     value: str = Field(min_length=1, max_length=10000)
@@ -45,8 +48,16 @@ class ItemIn(BaseModel):
     url: str | None = None
     advance_mode: bool = False
     advance_passphrase: str | None = None
+    tags: list[str] = []
+    favorite: bool = False
+    notes: str = ''
+    custom_fields: list[CustomField] = []
 class ItemsImportIn(BaseModel):
     items: list[ItemIn]
+class BulkActionIn(BaseModel):
+    item_ids: list[str] = Field(min_length=1)
+    action: str  # 'delete' | 'move'
+    category: str | None = None  # for 'move'
 class ShareIn(BaseModel):
     hours: int = Field(default=24, ge=1, le=168)
 class PhraseIn(BaseModel):
@@ -95,7 +106,7 @@ def public_user(u):
         'l3_viewed': u.get('l3_viewed', False),
     }
 def safe_item(doc):
-    return {'id': doc['id'], 'name': doc['name'], 'category': doc.get('category','Secret'), 'url': doc.get('url',''), 'advance_mode': doc.get('advance_mode', False), 'advance_locked_until': doc.get('advance_locked_until'), 'created_at': doc['created_at'], 'updated_at': doc['updated_at'], 'has_totp': bool(doc.get('totp_enc'))}
+    return {'id': doc['id'], 'name': doc['name'], 'category': doc.get('category','Secret'), 'url': doc.get('url',''), 'advance_mode': doc.get('advance_mode', False), 'advance_locked_until': doc.get('advance_locked_until'), 'created_at': doc['created_at'], 'updated_at': doc['updated_at'], 'has_totp': bool(doc.get('totp_enc')), 'tags': doc.get('tags', []), 'favorite': doc.get('favorite', False), 'notes': doc.get('notes', ''), 'custom_fields': doc.get('custom_fields', [])}
 async def log_event(user_id: str, action: str, detail: str = ''):
     try: await db.audit.insert_one({'user_id':user_id,'action':action,'detail':detail,'ts':datetime.now(timezone.utc).isoformat()})
     except Exception: pass
@@ -330,7 +341,7 @@ async def get_login_status(email: str):
     }
 
 @router.get('/auth/layer3-passwords')
-async def get_layer3_passwords(authorization: str | None = Header(default=None), for_export: bool = False):
+async def get_layer3_passwords(authorization: str | None = Header(default=None), for_export: bool = False, password: str | None = None):
     claims = auth_user(authorization)
     user = await db.users.find_one({'id': claims['sub']}, {'_id': 0})
     if not user: raise HTTPException(404, 'User not found')
@@ -342,18 +353,16 @@ async def get_layer3_passwords(authorization: str | None = Header(default=None),
             'layer3_enabled': False,
             'layer3_change_count': 0,
             'layer3_change_week_start': datetime.now(timezone.utc).isoformat(),
-            'l3_viewed': False,
         }})
         user = await db.users.find_one({'id': claims['sub']}, {'_id': 0})
-    # One-time view policy: passwords can only be viewed once on-screen
-    # for_export=True bypasses this restriction (export to file is always allowed)
-    if not for_export and user.get('l3_viewed', False):
-        raise HTTPException(403, 'Passwords already viewed once. Export them to file, or regenerate to get a new set.')
+    # If L3 is enabled, require account password to view (not for export)
+    if user.get('layer3_enabled') and not for_export:
+        if not password:
+            raise HTTPException(403, 'PASSWORD_REQUIRED')
+        if not pwd.verify(password, user['password']):
+            raise HTTPException(401, 'Wrong password')
     passwords = json.loads(fernet.decrypt(user['layer3_passwords_enc'].encode()).decode())
-    if not for_export:
-        # Mark as viewed after returning
-        await db.users.update_one({'id': claims['sub']}, {'$set': {'l3_viewed': True}})
-    return {'passwords': passwords, 'enabled': user.get('layer3_enabled', False), 'l3_viewed': user.get('l3_viewed', False)}
+    return {'passwords': passwords, 'enabled': user.get('layer3_enabled', False)}
 
 @router.post('/auth/toggle-layer3')
 async def toggle_layer3(data: dict, authorization: str | None = Header(default=None)):
@@ -405,7 +414,6 @@ async def regenerate_layer3(data: dict, authorization: str | None = Header(defau
         'layer3_passwords_enc': fernet.encrypt(json.dumps(new_passwords).encode()).decode(),
         'layer3_change_count': change_count + 1,
         'layer3_change_month_start': month_start,
-        'l3_viewed': False,  # Reset one-time view flag on regeneration
     }})
     await log_event(claims['sub'], 'L3_REGEN', f"change #{change_count + 1} this month")
     return {'passwords': new_passwords, 'changes_remaining': 2 - change_count}
@@ -446,7 +454,7 @@ async def items(authorization: str | None = Header(default=None)):
 @router.post('/items')
 async def create_item(data: ItemIn, authorization: str | None = Header(default=None)):
     user = auth_user(authorization); now = datetime.now(timezone.utc).isoformat()
-    doc = {'id':str(uuid.uuid4()),'user_id':user['sub'],'name':data.name,'category':data.category,'secret':fernet.encrypt(data.value.encode()).decode(),'created_at':now,'updated_at':now}
+    doc = {'id':str(uuid.uuid4()),'user_id':user['sub'],'name':data.name,'category':data.category,'secret':fernet.encrypt(data.value.encode()).decode(),'created_at':now,'updated_at':now,'tags':data.tags,'favorite':data.favorite,'notes':data.notes,'custom_fields':[cf.dict() for cf in data.custom_fields]}
     if data.url: doc['url'] = data.url
     if data.totp_secret: doc['totp_enc']=fernet.encrypt(data.totp_secret.encode()).decode()
     if data.advance_mode: doc['advance_mode']=True
@@ -463,12 +471,17 @@ async def reveal_item(item_id: str, authorization: str | None = Header(default=N
 @router.put('/items/{item_id}')
 async def update_item(item_id: str, data: ItemIn, authorization: str | None = Header(default=None)):
     user = auth_user(authorization); now=datetime.now(timezone.utc).isoformat()
-    upd={'name':data.name,'category':data.category,'secret':fernet.encrypt(data.value.encode()).decode(),'updated_at':now,'url':data.url or '','advance_mode':data.advance_mode}
+    old_doc = await db.items.find_one({'id':item_id,'user_id':user['sub']},{'_id':0})
+    if not old_doc: raise HTTPException(404,'Item not found')
+    upd={'name':data.name,'category':data.category,'secret':fernet.encrypt(data.value.encode()).decode(),'updated_at':now,'url':data.url or '','advance_mode':data.advance_mode,'tags':data.tags,'favorite':data.favorite,'notes':data.notes,'custom_fields':[cf.dict() for cf in data.custom_fields]}
     if data.totp_secret is not None: upd['totp_enc']=fernet.encrypt(data.totp_secret.encode()).decode() if data.totp_secret else None
     if data.advance_mode and data.advance_passphrase: upd['advance_hash']=pwd.hash(data.advance_passphrase)
     elif not data.advance_mode: upd['advance_hash']=None
+    # Track password history if value changed
+    old_val = fernet.decrypt(old_doc['secret'].encode()).decode()
+    if old_val != data.value:
+        await db.password_history.insert_one({'id':str(uuid.uuid4()),'item_id':item_id,'user_id':user['sub'],'old_value_enc':old_doc['secret'],'changed_at':now})
     result=await db.items.update_one({'id':item_id,'user_id':user['sub']},{'$set':upd})
-    if not result.matched_count: raise HTTPException(404,'Item not found')
     doc=await db.items.find_one({'id':item_id},{'_id':0}); await log_event(user['sub'],'EDIT',data.name); return safe_item(doc)
 
 @router.delete('/items/{item_id}')
@@ -490,6 +503,55 @@ async def get_totp(item_id: str, authorization: str | None = Header(default=None
     user=auth_user(authorization); doc=await db.items.find_one({'id':item_id,'user_id':user['sub']},{'_id':0})
     if not doc or not doc.get('totp_enc'): raise HTTPException(404,'No TOTP configured')
     return {'secret':fernet.decrypt(doc['totp_enc'].encode()).decode()}
+
+@router.patch('/items/{item_id}/favorite')
+async def toggle_favorite(item_id: str, authorization: str | None = Header(default=None)):
+    user=auth_user(authorization); doc=await db.items.find_one({'id':item_id,'user_id':user['sub']},{'_id':0})
+    if not doc: raise HTTPException(404,'Item not found')
+    new_val = not doc.get('favorite', False)
+    await db.items.update_one({'id':item_id,'user_id':user['sub']},{'$set':{'favorite':new_val}})
+    return {'id':item_id,'favorite':new_val}
+
+@router.patch('/items/{item_id}/tags')
+async def update_tags(item_id: str, data: dict, authorization: str | None = Header(default=None)):
+    user=auth_user(authorization); doc=await db.items.find_one({'id':item_id,'user_id':user['sub']},{'_id':0})
+    if not doc: raise HTTPException(404,'Item not found')
+    tags = data.get('tags', [])
+    await db.items.update_one({'id':item_id,'user_id':user['sub']},{'$set':{'tags':tags}})
+    return {'id':item_id,'tags':tags}
+
+@router.post('/items/bulk-action')
+async def bulk_action(data: BulkActionIn, authorization: str | None = Header(default=None)):
+    user=auth_user(authorization)
+    if data.action == 'delete':
+        result = await db.items.delete_many({'id':{'$in':data.item_ids},'user_id':user['sub']})
+        await log_event(user['sub'],'BULK_DELETE',f"{result.deleted_count} items")
+        return {'ok':True,'deleted':result.deleted_count}
+    elif data.action == 'move':
+        if not data.category: raise HTTPException(400,'Category required for move action')
+        result = await db.items.update_many({'id':{'$in':data.item_ids},'user_id':user['sub']},{'$set':{'category':data.category,'updated_at':datetime.now(timezone.utc).isoformat()}})
+        await log_event(user['sub'],'BULK_MOVE',f"{result.modified_count} items to {data.category}")
+        return {'ok':True,'moved':result.modified_count}
+    raise HTTPException(400,'Invalid action')
+
+@router.get('/items/{item_id}/history')
+async def get_password_history(item_id: str, authorization: str | None = Header(default=None)):
+    user=auth_user(authorization); doc=await db.items.find_one({'id':item_id,'user_id':user['sub']},{'_id':0})
+    if not doc: raise HTTPException(404,'Item not found')
+    if doc.get('advance_mode'): raise HTTPException(403,'Password history not available for Advance Mode items')
+    history = await db.password_history.find({'item_id':item_id,'user_id':user['sub']},{'_id':0}).sort('changed_at',-1).to_list(10)
+    return [{'id':h['id'],'changed_at':h['changed_at'],'value':fernet.decrypt(h['old_value_enc'].encode()).decode()} for h in history]
+
+@router.get('/items/duplicates')
+async def get_duplicates(authorization: str | None = Header(default=None)):
+    user=auth_user(authorization); docs=await db.items.find({'user_id':user['sub']},{'_id':0}).to_list(1000)
+    val_map = {}
+    for d in docs:
+        if d.get('advance_mode'): continue
+        val = fernet.decrypt(d['secret'].encode()).decode()
+        val_map.setdefault(val, []).append({'id':d['id'],'name':d['name'],'category':d.get('category','Secret')})
+    dupes = [group for group in val_map.values() if len(group) > 1]
+    return {'groups': dupes, 'total_duplicates': sum(len(g) for g in dupes)}
 
 @router.get('/security/report')
 async def security_report(authorization: str | None = Header(default=None)):

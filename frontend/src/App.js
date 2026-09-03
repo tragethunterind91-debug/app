@@ -1,34 +1,34 @@
 import {useEffect, useMemo, useRef, useState} from 'react';
 import axios from 'axios';
-import {ShieldCheck, LockKeyhole, Plus, Search, Eye, EyeOff, Copy, Download, Trash2, LogOut, KeyRound, ArrowUpRight, X, Check, RefreshCw, Pencil, Wand2, Upload, Share2, Activity, ShieldAlert, Gauge, Timer, Lock, HelpCircle, Settings, Calendar, Shield, AlertTriangle, ToggleLeft, ToggleRight, FileText, Skull, Menu, Sun, Moon, History, Monitor} from 'lucide-react';
+import {ShieldCheck, LockKeyhole, Plus, Search, Eye, EyeOff, Copy, Download, Trash2, LogOut, KeyRound, ArrowUpRight, X, Check, RefreshCw, Pencil, Wand2, Upload, Share2, Activity, ShieldAlert, Gauge, Timer, Lock, HelpCircle, Settings, Calendar, Shield, AlertTriangle, FileText, Skull, Menu, Sun, Moon, History, Monitor, Star, Tag, Hash} from 'lucide-react';
 import './App.css';
 import './brand.css';
 import {Toaster, toast} from 'sonner';
 import AdminPanel from './AdminPanel';
 import LandingPage from './LandingPage';
 import LoadingScreen from './LoadingScreen';
+import VaultItems from './VaultItems';
+import SettingsPanel from './SettingsPanel';
 
 const API=`${process.env.REACT_APP_BACKEND_URL}/api`;
 const client=axios.create({baseURL:API});
-const authHeader=()=>({headers:{Authorization:`Bearer ${localStorage.getItem('vault_token')}`} });
+const authHeader=()=>({headers:{Authorization:`Bearer ${localStorage.getItem('vault_token')}`}});
 const copyText=async(text)=>{try{await navigator.clipboard.writeText(text)}catch{const a=document.createElement('textarea');a.value=text;document.body.appendChild(a);a.select();document.execCommand('copy');a.remove()}};
 const hashPin=async(p)=>{const buf=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(p+'tp5-pin-salt'));return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('')};
 const formatApiError=detail=>{if(!detail)return 'Something went wrong. Please try again.';if(typeof detail==='string')return detail;if(Array.isArray(detail))return detail.map(e=>e?.msg||String(e)).join(' ');return detail?.msg||String(detail)};
-const strengthOf=value=>{let s=0;if(!value)return {label:'Empty',level:'empty',score:0};if(value.length>=8)s++;if(value.length>=12)s++;if(/[A-Z]/.test(value)&&/[a-z]/.test(value))s++;if(/\d/.test(value))s++;if(/[^A-Za-z0-9]/.test(value))s++;if(s<=2)return {label:'Weak',level:'weak',score:28};if(s<=4)return {label:'Fair',level:'fair',score:62};return {label:'Strong',level:'strong',score:100}};
+const strengthOf=value=>{let s=0;if(!value)return{label:'Empty',level:'empty',score:0};if(value.length>=8)s++;if(value.length>=12)s++;if(/[A-Z]/.test(value)&&/[a-z]/.test(value))s++;if(/\d/.test(value))s++;if(/[^A-Za-z0-9]/.test(value))s++;if(s<=2)return{label:'Weak',level:'weak',score:28};if(s<=4)return{label:'Fair',level:'fair',score:62};return{label:'Strong',level:'strong',score:100}};
+const _WORDS="able also area army back ball band bank base bath bear beat bell best bird bite blue boat body bold bolt bond bone book boot born boss both bowl calm camp card care cart cast cave cell chat chip chop clay clip coal coat code coil cold come cord core corn cost cozy crab crop cure cute dark dawn dear deck deed deep deny desk dice disk dock dome door dove dusk each ease east edge epic even exam face fact fail fall fame farm fast feel fell felt fern firm fish fist flex flip flow foam fold folk fond font foot ford form fort fuel full fund fuse gale game gate gear glow glue goal gold golf grab gulf gust half hall hand hard haze head heat heel helm help hero high hill hint hold hole home hood hook hope horn hour husk icon idea inch iris iron isle jade jest join joke jolt jump just keen keep kick kind king knob lace lamp land lane last late leaf lean lend life lift like lime line link lion list loom loop lore loss loud love luck make mall mane mark mask mass meat meet mesh milk mine mint mode moon more most much mule muse nail name navy neck need nest news nice node none norm nose note null oath obey once only open oval oven over page pair palm part past path pave peak peel pick pier pine ping pipe plan play plot plow plum pole pond pool port pose prep prey pull pump pure push rack rain rank read real reed reef rely rent rest rice rich ride ring risk road role roll roof rope rose rule rush safe sage sail same sand silk sing sink site size skin slam slim snap snow soil sole song sort soul span spin star stay stem step stir stop suit surf swap tale tall tank tape task tear text tick tide time tilt toad toll tomb tool torn town tree trim true tube tuck tusk unit user vast veil view vine volt walk wall wave west wide wild wind wise wish wolf wood word work wrap yell zero zone zoom".split(' ');
 
 function Auth({onLogin}){
   const [mode,setMode]=useState('login');const [email,setEmail]=useState('');const [password,setPassword]=useState('');const [busy,setBusy]=useState(false);
   const [authError,setAuthError]=useState('');
-  // Multi-stage login
   const [loginStage,setLoginStage]=useState(null);
   const [stageToken,setStageToken]=useState(null);
   const [birthdayInput,setBirthdayInput]=useState('');
   const [quizIndices,setQuizIndices]=useState([]);
   const [quizAnswers,setQuizAnswers]=useState({});
-  // Registration extras
   const [regBirthday,setRegBirthday]=useState('');
   const [regBirthdayConfirm,setRegBirthdayConfirm]=useState('');
-  // Login attempts display
   const [loginStatus,setLoginStatus]=useState(null);
   const checkLoginStatus=async(em)=>{if(!em||mode!=='login')return;try{const r=await client.get(`/auth/login-status?email=${encodeURIComponent(em)}`);setLoginStatus(r.data)}catch{setLoginStatus(null)}};
 
@@ -40,7 +40,6 @@ function Auth({onLogin}){
         if(regBirthday!==regBirthdayConfirm){toast.error('Birthdays do not match');setBusy(false);return}
         const r=await client.post('/auth/register',{email,password,birthday:regBirthday});
         localStorage.setItem('vault_token',r.data.token);
-        // Save credentials to browser password manager
         if('credentials' in navigator&&window.PasswordCredential){try{const c=new window.PasswordCredential({id:email,password,name:r.data.user.name});await navigator.credentials.store(c)}catch{}}
         toast.success('Vault created! Your Crypto Type Pass is waiting for you in Settings whenever you want it.');
         onLogin(r.data.user);
@@ -50,7 +49,6 @@ function Auth({onLogin}){
           setStageToken(r.data.token);setLoginStage('birthday');setBirthdayInput('');
         }else{
           localStorage.setItem('vault_token',r.data.token);
-          // Save credentials to browser password manager
           if('credentials' in navigator&&window.PasswordCredential){try{const c=new window.PasswordCredential({id:email,password,name:r.data.user?.name});await navigator.credentials.store(c)}catch{}}
           onLogin(r.data.user);
         }
@@ -78,7 +76,6 @@ function Auth({onLogin}){
     }catch(e){const msg=formatApiError(e.response?.data?.detail)||'Layer 3 verification failed';setAuthError(msg);toast.error(msg)}finally{setBusy(false)}
   };
 
-  // Birthday verification stage
   if(loginStage==='birthday')return(
     <main className="auth-shell"><section className="auth-art"><div className="brand"><img src="/toppass5-logo-sm.jpeg" alt="TopPass5" className="brand-logo-mark"/></div><div className="art-copy"><p className="eyebrow">LAYER 2 VERIFICATION</p><h1>Verify your<br/><em>identity.</em></h1><p>Enter your birthday to continue. This is a security checkpoint.</p></div><div className="security-stamp"><Calendar size={17}/><span>Birthday verification<br/><b>No forgot option — by design</b></span></div></section>
     <section className="auth-panel"><div className="auth-card"><div className="mobile-brand brand"><img src="/toppass5-logo-sm.jpeg" alt="TopPass5" className="brand-logo-mark"/></div>
@@ -89,7 +86,6 @@ function Auth({onLogin}){
     </div></section><Toaster theme="dark"/></main>
   );
 
-  // Layer 3 quiz stage
   if(loginStage==='layer3')return(
     <main className="auth-shell"><section className="auth-art"><div className="brand"><img src="/toppass5-logo-sm.jpeg" alt="TopPass5" className="brand-logo-mark"/></div><div className="art-copy"><p className="eyebrow">LAYER 3 VERIFICATION</p><h1>Crypto<br/><em>Type Pass.</em></h1><p>Answer correctly to access your vault. These are your 5-character crypto passwords.</p></div><div className="security-stamp"><Shield size={17}/><span>Layer 3 crypto type pass<br/><b>Fail = access denied</b></span></div></section>
     <section className="auth-panel"><div className="auth-card"><div className="mobile-brand brand"><img src="/toppass5-logo-sm.jpeg" alt="TopPass5" className="brand-logo-mark"/></div>
@@ -132,12 +128,42 @@ function Auth({onLogin}){
 
 function Vault({user,onLogout}){
   const inactivityRef=useRef(null);
-  const [items,setItems]=useState([]); const [query,setQuery]=useState(''); const [showForm,setShowForm]=useState(false); const [editing,setEditing]=useState(null); const [visible,setVisible]=useState({}); const [values,setValues]=useState({}); const [form,setForm]=useState({name:'',value:'',category:'Secret',totp_secret:'',url:'',advance_mode:false,advance_passphrase:''}); const [showGen,setShowGen]=useState(false); const [genOpts,setGenOpts]=useState({length:16,upper:true,lower:true,nums:true,syms:false}); const [genPwd,setGenPwd]=useState(''); const [cat,setCat]=useState('All'); const [shareModal,setShareModal]=useState(null); const [showAudit,setShowAudit]=useState(false); const [auditLogs,setAuditLogs]=useState([]); const [secReport,setSecReport]=useState(null); const [showSec,setShowSec]=useState(false); const [categories,setCategories]=useState(['Login','API key','Secret','Secure note','Wi-Fi','Bank']); const [breachBadge,setBreachBadge]=useState(0); const [breachChecking,setBreachChecking]=useState(false); const [breachScanned,setBreachScanned]=useState(false); const [showSharePicker,setShowSharePicker]=useState(null); const [showAdvancePrompt,setShowAdvancePrompt]=useState(null); const [advanceInput,setAdvanceInput]=useState(''); const [showShares,setShowShares]=useState(false); const [activeShares,setActiveShares]=useState([]); const [showSettings,setShowSettings]=useState(false); const [showHelp,setShowHelp]=useState(false); const [settings,setSettings]=useState({autofill:true});
-  const [showPinLock,setShowPinLock]=useState(false); const [pinInput,setPinInput]=useState(''); const [pinError,setPinError]=useState(''); const [pinEnabled,setPinEnabled]=useState(!!localStorage.getItem('vault_pin_hash')); const [setupPinMode,setSetupPinMode]=useState(false); const [setupPinValue,setSetupPinValue]=useState(''); const [setupPinConfirm,setSetupPinConfirm]=useState(''); const [setupPinErr,setSetupPinErr]=useState('');
-  const [loginHistory,setLoginHistory]=useState([]); const [historyLoaded,setHistoryLoaded]=useState(false);
+  const [items,setItems]=useState([]);
+  const [query,setQuery]=useState('');
+  const [showForm,setShowForm]=useState(false);
+  const [editing,setEditing]=useState(null);
+  const [visible,setVisible]=useState({});
+  const [values,setValues]=useState({});
+  const [form,setForm]=useState({name:'',value:'',category:'Secret',totp_secret:'',url:'',advance_mode:false,advance_passphrase:'',tags:[],favorite:false,notes:'',custom_fields:[]});
+  const [showGen,setShowGen]=useState(false);
+  const [genOpts,setGenOpts]=useState({length:16,upper:true,lower:true,nums:true,syms:false,mode:'random'});
+  const [genPwd,setGenPwd]=useState('');
+  const [cat,setCat]=useState('All');
+  const [shareModal,setShareModal]=useState(null);
+  const [showAudit,setShowAudit]=useState(false);
+  const [auditLogs,setAuditLogs]=useState([]);
+  const [secReport,setSecReport]=useState(null);
+  const [showSec,setShowSec]=useState(false);
+  const [categories,setCategories]=useState(['Login','API key','Secret','Secure note','Wi-Fi','Bank']);
+  const [breachBadge,setBreachBadge]=useState(0);
+  const [breachChecking,setBreachChecking]=useState(false);
+  const [breachScanned,setBreachScanned]=useState(false);
+  const [showSharePicker,setShowSharePicker]=useState(null);
+  const [showAdvancePrompt,setShowAdvancePrompt]=useState(null);
+  const [advanceInput,setAdvanceInput]=useState('');
+  const [showShares,setShowShares]=useState(false);
+  const [activeShares,setActiveShares]=useState([]);
+  const [showSettings,setShowSettings]=useState(false);
+  const [showHelp,setShowHelp]=useState(false);
+  const [settings,setSettings]=useState({autofill:true});
+  const [showPinLock,setShowPinLock]=useState(false);
+  const [pinInput,setPinInput]=useState('');
+  const [pinError,setPinError]=useState('');
+  const [pinEnabled,setPinEnabled]=useState(!!localStorage.getItem('vault_pin_hash'));
+  const [loginHistory,setLoginHistory]=useState([]);
+  const [historyLoaded,setHistoryLoaded]=useState(false);
   const [mobileNavOpen,setMobileNavOpen]=useState(false);
   const [showItemProps,setShowItemProps]=useState(null);
-  // Layer 3, Hardcore, Disclaimer states
   const [showDisclaimer,setShowDisclaimer]=useState(false);
   const [disclaimerEnabled,setDisclaimerEnabled]=useState(user.disclaimer_enabled||false);
   const [showTerms,setShowTerms]=useState(false);
@@ -148,13 +174,19 @@ function Vault({user,onLogout}){
   const [showL3View,setShowL3View]=useState(false);
   const [showL3Regen,setShowL3Regen]=useState(false);
   const [l3RegenPwd,setL3RegenPwd]=useState('');
-  const [l3QuizMode,setL3QuizMode]=useState(null); // {indices,answers} for enable quiz
+  const [l3QuizMode,setL3QuizMode]=useState(null);
   const [hardcoreData,setHardcoreData]=useState(null);
   const [showBirthdaySetup,setShowBirthdaySetup]=useState(false);
   const [bdaySetup,setBdaySetup]=useState('');
   const [bdaySetupConfirm,setBdaySetupConfirm]=useState('');
   const [hasBirthday,setHasBirthday]=useState(user.has_birthday||false);
-  const [l3Viewed,setL3Viewed]=useState(user.l3_viewed||false);
+  const [duplicateIds,setDuplicateIds]=useState([]);
+  const [showHistory,setShowHistory]=useState(null);
+  const [historyData,setHistoryData]=useState([]);
+  const [tagInput,setTagInput]=useState('');
+  // L3 password prompt for viewing when locked
+  const [l3ViewPwd,setL3ViewPwd]=useState('');
+  const [showL3PwdPrompt,setShowL3PwdPrompt]=useState(false);
   const strength=strengthOf(form.value||'');
 
   useEffect(()=>{document.documentElement.setAttribute('data-theme',settings.theme||localStorage.getItem('tp5_theme')||'dark')},[settings.theme]);
@@ -170,7 +202,6 @@ function Vault({user,onLogout}){
     return()=>{events.forEach(e=>document.removeEventListener(e,reset));if(inactivityRef.current)clearTimeout(inactivityRef.current)};
   },[pinEnabled,settings.autoLockMinutes]);
 
-  // Auto-verify PIN when 4 digits entered
   useEffect(()=>{
     if(pinInput.length!==4)return;
     (async()=>{
@@ -181,26 +212,76 @@ function Vault({user,onLogout}){
     })()
   },[pinInput]);
 
-  const load=()=>{client.get('/items',authHeader()).then(r=>{setItems(r.data);setTimeout(()=>runBackgroundBreachCheck(r.data),800)}).catch(()=>onLogout()); client.get('/preferences',authHeader()).then(r=>{if(r.data.categories)setCategories(r.data.categories);setSettings(s=>({...s,autofill:typeof r.data.autofill==='boolean'?r.data.autofill:s.autofill,theme:r.data.theme||localStorage.getItem('tp5_theme')||'dark',autoLockMinutes:r.data.autoLockMinutes||Number(localStorage.getItem('tp5_auto_lock'))||5}))}).catch(()=>{})}; useEffect(()=>{load()},[]);
+  // Wire up globals for child components
+  useEffect(()=>{
+    window.__showTerms=()=>{setShowTerms(true);setShowSettings(false)};
+    window.__showPrivacy=()=>{setShowPrivacy(true);setShowSettings(false)};
+    window.__bulkAction=async(action,ids)=>{
+      try{
+        const r=await client.post('/items/bulk-action',{item_ids:ids,action},authHeader());
+        if(action==='delete')toast.success(`${r.data.deleted} item(s) deleted`);
+        load();
+      }catch(e){toast.error(e.response?.data?.detail||'Bulk action failed')}
+    };
+    return()=>{delete window.__showTerms;delete window.__showPrivacy;delete window.__bulkAction};
+  },[]);
 
-  const filtered=useMemo(()=>items.filter(i=>i.name.toLowerCase().includes(query.toLowerCase())&&(cat==='All'||i.category===cat)),[items,query,cat]);
+  const load=()=>{
+    client.get('/items',authHeader()).then(r=>{setItems(r.data);setTimeout(()=>runBackgroundBreachCheck(r.data),800);loadDuplicates()}).catch(()=>onLogout());
+    client.get('/preferences',authHeader()).then(r=>{if(r.data.categories)setCategories(r.data.categories);setSettings(s=>({...s,autofill:typeof r.data.autofill==='boolean'?r.data.autofill:s.autofill,theme:r.data.theme||localStorage.getItem('tp5_theme')||'dark',autoLockMinutes:r.data.autoLockMinutes||Number(localStorage.getItem('tp5_auto_lock'))||5}))}).catch(()=>{});
+  };
+  useEffect(()=>{load()},[]);
 
-  const save=async(e)=>{e.preventDefault(); try{if(editing) await client.put(`/items/${editing.id}`,form,authHeader()); else await client.post('/items',form,authHeader()); if(form.category&&!categories.includes(form.category))saveCategory(form.category); toast.success(editing?'Item updated':'Item encrypted and saved'); setShowForm(false);setEditing(null);setForm({name:'',value:'',category:'Secret',totp_secret:'',url:'',advance_mode:false,advance_passphrase:''});load()}catch(e){toast.error(e.response?.data?.detail||'Save failed')}};
+  const loadDuplicates=async()=>{
+    try{
+      const r=await client.get('/items/duplicates',authHeader());
+      const ids=[];
+      (r.data.groups||[]).forEach(g=>g.forEach(i=>ids.push(i.id)));
+      setDuplicateIds(ids);
+    }catch{}
+  };
 
-  const reveal=async(id)=>{const item=items.find(i=>i.id===id);if(item?.advance_mode&&!values[id]){setAdvanceInput('');setShowAdvancePrompt({item,action:'reveal'});return null}if(values[id]){setVisible({...visible,[id]:!visible[id]});return values[id]} const r=await client.get(`/items/${id}/value`,authHeader()); setValues({...values,[id]:r.data.value});setVisible({...visible,[id]:true});return r.data.value};
+  const save=async(e)=>{
+    e.preventDefault();
+    try{
+      const payload={...form,tags:form.tags||[],custom_fields:form.custom_fields||[]};
+      if(editing) await client.put(`/items/${editing.id}`,payload,authHeader());
+      else await client.post('/items',payload,authHeader());
+      if(form.category&&!categories.includes(form.category))saveCategory(form.category);
+      toast.success(editing?'Item updated':'Item encrypted and saved');
+      setShowForm(false);setEditing(null);resetForm();load();
+    }catch(e){toast.error(e.response?.data?.detail||'Save failed')}
+  };
+
+  const resetForm=()=>setForm({name:'',value:'',category:'Secret',totp_secret:'',url:'',advance_mode:false,advance_passphrase:'',tags:[],favorite:false,notes:'',custom_fields:[]});
+
+  const reveal=async(id)=>{const item=items.find(i=>i.id===id);if(item?.advance_mode&&!values[id]){setAdvanceInput('');setShowAdvancePrompt({item,action:'reveal'});return null}if(values[id]){setVisible(v=>({...v,[id]:!v[id]}));return values[id]} const r=await client.get(`/items/${id}/value`,authHeader()); setValues(v=>({...v,[id]:r.data.value}));setVisible(v=>({...v,[id]:true}));return r.data.value};
 
   const copy=async(id)=>{const item=items.find(i=>i.id===id);if(item?.advance_mode&&!values[id]){setAdvanceInput('');setShowAdvancePrompt({item,action:'copy'});return}const value=values[id]||await reveal(id);if(!value)return;await copyText(value);toast.success('Copied to clipboard')};
 
   const remove=async(id)=>{const item=items.find(i=>i.id===id);if(item?.advance_mode&&!values[id]){setAdvanceInput('');setShowAdvancePrompt({item,action:'delete'});return}if(window.confirm('Delete this item permanently?')){await client.delete(`/items/${id}`,authHeader());toast.success('Item deleted');load()}};
 
-  const startEdit=async(item)=>{if(item.advance_mode&&!values[item.id]){setAdvanceInput('');setShowAdvancePrompt({item,action:'edit'});return}let v=values[item.id];if(!v){const r=await client.get(`/items/${item.id}/value`,authHeader());v=r.data.value;setValues(p=>({...p,[item.id]:v}))}setEditing(item);setForm({name:item.name,value:v,category:item.category,totp_secret:'',url:item.url||'',advance_mode:item.advance_mode||false,advance_passphrase:''});setShowForm(true)};
+  const startEdit=async(item)=>{if(item.advance_mode&&!values[item.id]){setAdvanceInput('');setShowAdvancePrompt({item,action:'edit'});return}let v=values[item.id];if(!v){const r=await client.get(`/items/${item.id}/value`,authHeader());v=r.data.value;setValues(p=>({...p,[item.id]:v}))}setEditing(item);setForm({name:item.name,value:v,category:item.category,totp_secret:'',url:item.url||'',advance_mode:item.advance_mode||false,advance_passphrase:'',tags:item.tags||[],favorite:item.favorite||false,notes:item.notes||'',custom_fields:item.custom_fields||[]});setShowForm(true)};
 
-  const submitAdvancePassphrase=async()=>{if(!showAdvancePrompt)return;const{item,action}=showAdvancePrompt;try{const r=await client.post(`/items/${item.id}/advance-reveal`,{passphrase:advanceInput},authHeader());const val=r.data.value;setValues(p=>({...p,[item.id]:val}));setShowAdvancePrompt(null);setAdvanceInput('');if(action==='reveal'){setVisible(p=>({...p,[item.id]:true}))}else if(action==='copy'){await copyText(val);toast.success('Copied!')}else if(action==='edit'){setEditing(item);setForm({name:item.name,value:val,category:item.category,totp_secret:'',url:item.url||'',advance_mode:true,advance_passphrase:''});setShowForm(true)}else if(action==='delete'){if(window.confirm('Delete this item permanently?')){await client.delete(`/items/${item.id}`,authHeader());toast.success('Item deleted');load()}}}catch(e){const msg=e.response?.data?.detail||'Wrong passphrase';toast.error(msg,{duration:msg.includes('lock')||msg.includes('attempt')?8000:3000})}};
+  const submitAdvancePassphrase=async()=>{if(!showAdvancePrompt)return;const{item,action}=showAdvancePrompt;try{const r=await client.post(`/items/${item.id}/advance-reveal`,{passphrase:advanceInput},authHeader());const val=r.data.value;setValues(p=>({...p,[item.id]:val}));setShowAdvancePrompt(null);setAdvanceInput('');if(action==='reveal'){setVisible(p=>({...p,[item.id]:true}))}else if(action==='copy'){await copyText(val);toast.success('Copied!')}else if(action==='edit'){setEditing(item);setForm({name:item.name,value:val,category:item.category,totp_secret:'',url:item.url||'',advance_mode:true,advance_passphrase:'',tags:item.tags||[],favorite:item.favorite||false,notes:item.notes||'',custom_fields:item.custom_fields||[]});setShowForm(true)}else if(action==='delete'){if(window.confirm('Delete this item permanently?')){await client.delete(`/items/${item.id}`,authHeader());toast.success('Item deleted');load()}}}catch(e){const msg=e.response?.data?.detail||'Wrong passphrase';toast.error(msg,{duration:msg.includes('lock')||msg.includes('attempt')?8000:3000})}};
+
+  const toggleFavorite=async(id)=>{
+    try{
+      const r=await client.patch(`/items/${id}/favorite`,{},authHeader());
+      setItems(prev=>prev.map(i=>i.id===id?{...i,favorite:r.data.favorite}:i));
+    }catch{toast.error('Failed to update favorite')}
+  };
 
   const loadShares=async()=>{try{const r=await client.get('/shares',authHeader());setActiveShares(r.data);setShowShares(true)}catch{toast.error('Could not load shares')}};
   const revokeShare=async(token)=>{try{await client.delete(`/shares/${token}`,authHeader());setActiveShares(p=>p.filter(s=>s.token!==token));toast.success('Share revoked')}catch{toast.error('Revoke failed')}};
 
-  const mkPwd=(o)=>{let c='';if(o.upper)c+='ABCDEFGHIJKLMNOPQRSTUVWXYZ';if(o.lower)c+='abcdefghijklmnopqrstuvwxyz';if(o.nums)c+='0123456789';if(o.syms)c+='!@#$%^&*()-_=+[]{}|;:,.<>?';if(!c)c='abcdefghijklmnopqrstuvwxyz0123456789';return Array.from({length:o.length},()=>c[Math.floor(Math.random()*c.length)]).join('')};
+  const mkPwd=(o)=>{
+    if(o.mode==='passphrase'){
+      const count=Math.max(3,Math.min(12,Math.floor(o.length/4)));
+      return Array.from({length:count},()=>_WORDS[Math.floor(Math.random()*_WORDS.length)]).join('-');
+    }
+    let c='';if(o.upper)c+='ABCDEFGHIJKLMNOPQRSTUVWXYZ';if(o.lower)c+='abcdefghijklmnopqrstuvwxyz';if(o.nums)c+='0123456789';if(o.syms)c+='!@#$%^&*()-_=+[]{}|;:,.<>?';if(!c)c='abcdefghijklmnopqrstuvwxyz0123456789';return Array.from({length:o.length},()=>c[Math.floor(Math.random()*c.length)]).join('');
+  };
 
   const b32d=s=>{const a='ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';let bits=0,val=0,out=[];for(const c of s.toUpperCase().replace(/[^A-Z2-7]/g,'')){val=(val<<5)|a.indexOf(c);bits+=5;if(bits>=8){out.push((val>>>(bits-8))&0xFF);bits-=8}}return new Uint8Array(out)};
   const getTOTP=async secret=>{const key=b32d(secret);const T=Math.floor(Date.now()/30000);const msg=new Uint8Array(8);new DataView(msg.buffer).setUint32(4,T);const k=await crypto.subtle.importKey('raw',key,{name:'HMAC',hash:'SHA-1'},false,['sign']);const sig=new Uint8Array(await crypto.subtle.sign('HMAC',k,msg));const o=sig[19]&0xf;return(((sig[o]&0x7f)<<24|(sig[o+1]&0xff)<<16|(sig[o+2]&0xff)<<8|(sig[o+3]&0xff))%1000000).toString().padStart(6,'0')};
@@ -224,9 +305,32 @@ function Vault({user,onLogout}){
   const loadAudit=async()=>{try{const r=await client.get('/audit',authHeader());setAuditLogs(r.data);setShowAudit(true)}catch{toast.error('Could not load activity')}};
 
   const exportItem=(item)=>{const data=JSON.stringify({name:item.name,value:values[item.id]||'[reveal before export]',category:item.category},null,2);const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([data],{type:'application/json'}));a.download=`${item.name.replace(/\s+/g,'-')}.json`;a.click()};
-  const exportAll=async()=>{if(!window.confirm('This will download ALL your secrets in plain text. Continue?'))return;const full=await Promise.all(items.map(async i=>{if(i.advance_mode)return {...i,value:'[Protected — Advance Mode, export not available]'};const r=await client.get(`/items/${i.id}/value`,authHeader());return {...i,value:r.data.value}}));const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(full,null,2)],{type:'application/json'}));a.download='toppass5-backup.json';a.click();toast.success('Vault backup downloaded')};
-  // --- Layer 3 & Hardcore helpers ---
-  const loadL3Passwords=async()=>{try{const r=await client.get('/auth/layer3-passwords',authHeader());setL3Passwords(r.data.passwords);setL3Enabled(r.data.enabled);setL3Viewed(true);return r.data}catch(e){if(e.response?.status===403){setL3Viewed(true);toast.info('Passwords already viewed once — use Export to download them.',{duration:5000})}else{toast.error('Could not load Layer 3 data')}return null}};
+  const exportAll=async()=>{if(!window.confirm('This will download ALL your secrets in plain text. Continue?'))return;const full=await Promise.all(items.map(async i=>{if(i.advance_mode)return{...i,value:'[Protected — Advance Mode]'};const r=await client.get(`/items/${i.id}/value`,authHeader());return{...i,value:r.data.value}}));const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(full,null,2)],{type:'application/json'}));a.download='toppass5-backup.json';a.click();toast.success('Vault backup downloaded')};
+
+  // Layer 3 helpers
+  const loadL3Passwords=async(password)=>{
+    try{
+      const params=new URLSearchParams();
+      if(password)params.set('password',password);
+      const r=await client.get(`/auth/layer3-passwords?${params}`,authHeader());
+      setL3Passwords(r.data.passwords);setL3Enabled(r.data.enabled);return r.data;
+    }catch(e){
+      if(e.response?.status===403&&e.response?.data?.detail==='PASSWORD_REQUIRED'){
+        setShowL3PwdPrompt(true);setShowSettings(false);
+        return null;
+      }
+      toast.error(e.response?.data?.detail||'Could not load Layer 3 data');return null;
+    }
+  };
+  const viewL3=async()=>{
+    if(l3Enabled){setShowL3PwdPrompt(true);setShowSettings(false);setL3ViewPwd('');return}
+    const d=await loadL3Passwords();
+    if(d?.passwords){setShowL3View(true);setShowSettings(false)}
+  };
+  const submitL3ViewPwd=async()=>{
+    const d=await loadL3Passwords(l3ViewPwd);
+    if(d?.passwords){setShowL3PwdPrompt(false);setShowL3View(true);setL3ViewPwd('')}
+  };
   const exportL3Passwords=async()=>{
     try{const r=await client.get('/auth/layer3-passwords?for_export=true',authHeader());
     const data=r.data;if(!data?.passwords){toast.error('Could not load passwords for export');return}
@@ -234,11 +338,11 @@ function Vault({user,onLogout}){
     data.passwords.forEach((p,i)=>lines.push(`  Pass #${String(i+1).padStart(2,'0')}:  ${p}`));
     lines.push('','───────────────────────────────────────',`  Generated: ${new Date().toISOString().slice(0,10)}`,`  Account: ${user.email}`,'  WARNING: Do NOT share this file.','═══════════════════════════════════════');
     const blob=new Blob([lines.join('\n')],{type:'text/plain'});
-    const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`toppass5-layer3-${Date.now()}.txt`;a.click();URL.revokeObjectURL(a.href);toast.success('Crypto type passwords exported!');}
+    const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`toppass5-layer3-${Date.now()}.txt`;a.click();URL.revokeObjectURL(a.href);toast.success('Crypto type passwords exported!')}
     catch{toast.error('Export failed')}
-  };  const toggleL3=async(enable)=>{
+  };
+  const toggleL3=async(enable)=>{
     if(enable){
-      // Don't need to load passwords — just generate quiz indices, user types from their saved copy
       const indices=[];while(indices.length<3){const i=Math.floor(Math.random()*20);if(!indices.includes(i))indices.push(i)}
       indices.sort((a,b)=>a-b);
       setL3QuizMode({indices,answers:{}});
@@ -255,7 +359,7 @@ function Vault({user,onLogout}){
   };
   const regenL3=async()=>{
     if(!l3RegenPwd){toast.error('Enter your current password');return}
-    try{const r=await client.post('/auth/regenerate-layer3',{password:l3RegenPwd},authHeader());setL3Passwords(r.data.passwords);setL3Viewed(false);setShowL3Regen(false);setL3RegenPwd('');setShowL3View(true);toast.success(`New passwords generated! ${r.data.changes_remaining} changes left this month. View them now — this is your one chance.`)}catch(e){toast.error(e.response?.data?.detail||'Failed to regenerate')}
+    try{const r=await client.post('/auth/regenerate-layer3',{password:l3RegenPwd},authHeader());setL3Passwords(r.data.passwords);setShowL3Regen(false);setL3RegenPwd('');setShowL3View(true);toast.success(`New passwords generated! ${r.data.changes_remaining} changes left this month.`)}catch(e){toast.error(e.response?.data?.detail||'Failed to regenerate')}
   };
   const loadHardcore=async()=>{try{const r=await client.get('/auth/hardcore-settings',authHeader());setHardcoreData(r.data)}catch{toast.error('Could not load Hardcore settings')}};
   const saveHardcore=async(newData)=>{
@@ -265,7 +369,6 @@ function Vault({user,onLogout}){
     if(enable&&!disclaimerEnabled){setShowDisclaimer(true)}
     try{await client.post('/auth/toggle-disclaimer',{enabled:enable},authHeader());setDisclaimerEnabled(enable);if(!enable)setShowDisclaimer(false)}catch{toast.error('Failed to update')}
   };
-  const acceptDisclaimer=()=>{setShowDisclaimer(false)};
   const saveBirthday=async()=>{
     if(!bdaySetup||!bdaySetupConfirm){toast.error('Both fields required');return}
     if(bdaySetup!==bdaySetupConfirm){toast.error('Birthdays do not match');return}
@@ -275,8 +378,23 @@ function Vault({user,onLogout}){
   const isItemLocked=(item)=>item.advance_locked_until&&new Date(item.advance_locked_until)>new Date();
   const autoComp=settings.autofill?undefined:'off';
 
-  // Clickable item helper for security report
   const clickSecItem=(name)=>{const it=items.find(x=>x.name===name);if(it){setShowSec(false);startEdit(it)}};
+
+  // Password history
+  const loadHistory=async(item)=>{
+    try{const r=await client.get(`/items/${item.id}/history`,authHeader());setHistoryData(r.data);setShowHistory(item)}catch(e){
+      if(e.response?.status===403)toast.error('History not available for Advance Mode items');
+      else toast.error('Could not load history');
+    }
+  };
+
+  // Tag helpers
+  const addTag=()=>{const t=tagInput.trim();if(t&&!(form.tags||[]).includes(t)){setForm(f=>({...f,tags:[...(f.tags||[]),t]}));setTagInput('')}};
+  const removeTag=(t)=>setForm(f=>({...f,tags:(f.tags||[]).filter(x=>x!==t)}));
+  // Custom field helpers
+  const addCustomField=()=>setForm(f=>({...f,custom_fields:[...(f.custom_fields||[]),{key:'',value:''}]}));
+  const updateCustomField=(idx,field,val)=>setForm(f=>({...f,custom_fields:(f.custom_fields||[]).map((cf,i)=>i===idx?{...cf,[field]:val}:cf)}));
+  const removeCustomField=(idx)=>setForm(f=>({...f,custom_fields:(f.custom_fields||[]).filter((_,i)=>i!==idx)}));
 
   return <div className="app-shell">
     <div className="mobile-topbar" data-testid="mobile-topbar"><img src="/toppass5-logo-sm.jpeg" alt="TopPass5" className="brand-logo-mark"/><span className="mobile-topbar-title">TOPPASS5</span><button className="icon-btn mobile-menu-btn" data-testid="mobile-menu-toggle" onClick={()=>setMobileNavOpen(true)}><Menu size={20}/></button></div>
@@ -309,41 +427,83 @@ function Vault({user,onLogout}){
     </aside>
 
     <main className="vault-main">
-      <header className="topbar"><div><p className="eyebrow">PERSONAL VAULT / TODAY</p><h1>Good to see you, {user.name?.split(' ')[0]}</h1></div><div className="top-actions"><label className="secondary top-btn" data-testid="import-button" title="Import from backup JSON"><Upload size={16}/> Import<input type="file" accept=".json" style={{display:'none'}} onChange={importVault}/></label><button className="secondary top-btn" data-testid="export-all-button" onClick={exportAll}><Download size={16}/> Export</button><button className="secondary top-btn" data-testid="generator-button" onClick={()=>{setGenPwd(mkPwd(genOpts));setShowGen(true)}}><Wand2 size={16}/> Generator</button><button className="primary" data-testid="add-item-button" onClick={()=>{setEditing(null);setForm({name:'',value:mkPwd(genOpts),category:'Secret',totp_secret:'',url:'',advance_mode:false,advance_passphrase:''});setShowForm(true)}}><Plus size={17}/> Add value</button></div></header>
-      <section className="metrics"><div><span>Protected values</span><strong data-testid="protected-count">{items.length.toString().padStart(2,'0')}</strong></div><div><span>Security health</span><strong className="green">Excellent <Check size={17}/></strong></div><div><span>Last activity</span><strong>Just now</strong></div></section>
-      <section className="vault-section"><div className="section-head"><div><p className="eyebrow">YOUR COLLECTION</p><h2>Encrypted values</h2></div><label className="search"><Search size={17}/><input data-testid="vault-search-input" value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search your vault…"/></label></div>
-        <div className="cat-filter">{['All',...new Set(categories)].map(c=><button key={c} className={`cat-chip${cat===c?' active':''}`} data-testid={`cat-filter-${c.replace(/\s+/g,'-')}`} onClick={()=>setCat(c)}>{c}</button>)}</div>
-        {filtered.length===0?<div className="empty-state" data-testid="empty-vault-state"><div className="empty-icon"><LockKeyhole/></div><h3>{query?'Nothing found':'Your vault is quiet'}</h3><p>{query?'Try another name.':'Add your first value and keep it protected.'}</p><button className="primary" data-testid="empty-add-button" onClick={()=>setShowForm(true)}><Plus size={17}/> Add your first value</button></div>:
-        <div className="item-list">{filtered.map(item=><article className="item-row" key={item.id} data-testid={`vault-item-${item.id}`}>
-          <div className="item-icon"><LockKeyhole size={18}/></div>
-          <div className="item-info">
-            <div className="item-name-row">
-              <b data-testid={`item-name-${item.id}`}>{item.name}</b>
-              {item.advance_mode&&<span className="adv-badge" title={isItemLocked(item)?`Locked until ${new Date(item.advance_locked_until).toLocaleDateString()}`:'Advance Mode — extra passphrase required'}><Lock size={12}/>{isItemLocked(item)?' LOCKED':''}</span>}
-            </div>
-            <span>{item.category} · Updated {new Date(item.updated_at).toLocaleDateString()}</span>
-          </div>
-          <div className="secret-preview" data-testid={`item-value-${item.id}`}>{visible[item.id]?values[item.id]:'••••••••••••'}</div>
-          <div className="item-actions">
-            <button className="icon-btn" data-testid={`props-item-${item.id}`} onClick={()=>setShowItemProps(item)} title="Item properties"><Settings size={15}/></button>
-            {item.has_totp&&<button className="icon-btn totp-btn" data-testid={`totp-item-${item.id}`} onClick={()=>revealTOTP(item)} title="Get OTP code"><Timer size={16}/></button>}
-            <button className="icon-btn" data-testid={`reveal-item-${item.id}`} onClick={()=>reveal(item.id)} title="Reveal value"><Eye size={17}/></button>
-            <button className="icon-btn" data-testid={`copy-item-${item.id}`} onClick={()=>copy(item.id)} title="Copy to clipboard"><Copy size={17}/></button>
-            <button className="icon-btn" data-testid={`breach-item-${item.id}`} onClick={()=>checkBreach(item)} title="Check for breaches" disabled={item.advance_mode} style={item.advance_mode?{opacity:.3,cursor:'not-allowed'}:undefined}><ShieldAlert size={16}/></button>
-            {!item.advance_mode&&<button className="icon-btn" data-testid={`download-item-${item.id}`} onClick={()=>exportItem(item)} title="Download as JSON"><Download size={17}/></button>}
-            {!item.advance_mode&&!isItemLocked(item)&&<button className="icon-btn share-btn share-btn-prominent" data-testid={`share-item-${item.id}`} onClick={()=>setShowSharePicker(item)} title="Share via expiring link"><Share2 size={16}/><span className="share-btn-label">Share</span></button>}
-            <button className="icon-btn" data-testid={`edit-item-${item.id}`} onClick={()=>startEdit(item)} title="Edit item"><Pencil size={16}/></button>
-            <button className="icon-btn danger" data-testid={`delete-item-${item.id}`} onClick={()=>remove(item.id)} title="Delete permanently"><Trash2 size={17}/></button>
-          </div>
-        </article>)}</div>}
-      </section>
+      <header className="topbar"><div><p className="eyebrow">PERSONAL VAULT / TODAY</p><h1>Good to see you, {user.name?.split(' ')[0]}</h1></div><div className="top-actions"><label className="secondary top-btn" data-testid="import-button" title="Import from backup JSON"><Upload size={16}/> Import<input type="file" accept=".json" style={{display:'none'}} onChange={importVault}/></label><button className="secondary top-btn" data-testid="export-all-button" onClick={exportAll}><Download size={16}/> Export</button><button className="secondary top-btn" data-testid="generator-button" onClick={()=>{setGenPwd(mkPwd(genOpts));setShowGen(true)}}><Wand2 size={16}/> Generator</button><button className="primary" data-testid="add-item-button" onClick={()=>{setEditing(null);setForm({name:'',value:mkPwd(genOpts),category:'Secret',totp_secret:'',url:'',advance_mode:false,advance_passphrase:'',tags:[],favorite:false,notes:'',custom_fields:[]});setShowForm(true)}}><Plus size={17}/> Add value</button></div></header>
+      <section className="metrics"><div><span>Protected values</span><strong data-testid="protected-count">{items.length.toString().padStart(2,'0')}</strong></div><div><span>Security health</span><strong className="green">Excellent <Check size={17}/></strong></div><div><span>Duplicates</span><strong className={duplicateIds.length>0?'dup-warn':'green'} data-testid="dup-metric">{duplicateIds.length>0?duplicateIds.length:'0'} {duplicateIds.length===0&&<Check size={17}/>}</strong></div></section>
+
+      <VaultItems
+        items={items} query={query} setQuery={setQuery} cat={cat} setCat={setCat} categories={categories}
+        visible={visible} values={values}
+        onReveal={reveal} onCopy={copy} onDelete={remove} onStartEdit={startEdit}
+        onShare={item=>setShowSharePicker(item)} onCheckBreach={checkBreach}
+        onExportItem={exportItem} onRevealTOTP={revealTOTP} onShowItemProps={item=>setShowItemProps(item)}
+        onToggleFavorite={toggleFavorite} onShowHistory={loadHistory}
+        isItemLocked={isItemLocked} duplicateIds={duplicateIds}
+        showForm={showForm} setShowForm={setShowForm}
+      />
     </main>
 
-    {/* Item Form Modal */}
-    {showForm&&<div className="modal-backdrop"><form className="modal item-form-modal" onSubmit={save} data-testid="item-form"><button type="button" className="modal-close icon-btn" data-testid="close-item-modal" onClick={()=>{setShowForm(false);setEditing(null);setForm({name:'',value:'',category:'Secret',totp_secret:'',url:'',advance_mode:false,advance_passphrase:''})}}><X/></button><p className="eyebrow">{editing?'EDIT VALUE':'NEW VALUE'}</p><h2>{editing?'Update protected value':'Add to your vault'}</h2><label>Name<input data-testid="item-name-input" value={form.name} onChange={e=>setForm({...form,name:e.target.value})} required placeholder="e.g. Wi-Fi password"/></label><label>Value<div className="gen-row"><textarea data-testid="item-value-input" autoComplete={autoComp} value={form.value} onChange={e=>setForm({...form,value:e.target.value})} required placeholder="Your secret value" rows="4"/><button type="button" className="gen-inline" data-testid="generate-inline-button" onClick={()=>setForm({...form,value:mkPwd(genOpts)})} title="Generate password"><Wand2 size={14}/> Generate</button></div><div className="strength-meter" data-testid="password-strength-meter"><div className="strength-top"><span>Password strength</span><b className={`strength-${strength.level}`} data-testid="password-strength-label">{strength.label}</b></div><div className="strength-track"><div className={`strength-fill strength-${strength.level}`} data-testid="password-strength-bar" style={{width:`${strength.score}%`,backgroundColor:strength.level==='strong'?'var(--green)':strength.level==='fair'?'#f59e0b':strength.level==='weak'?'var(--red)':'transparent'}}/></div></div></label><label>Category<input list="cat-opts" data-testid="item-category-input" value={form.category} onChange={e=>setForm({...form,category:e.target.value})} placeholder="e.g. Login, API key…"/><datalist id="cat-opts">{categories.map(c=><option key={c} value={c}/>)}</datalist></label><label>Authenticator Secret (TOTP) — optional<input data-testid="item-totp-input" type="text" value={form.totp_secret||''} onChange={e=>setForm({...form,totp_secret:e.target.value})} placeholder="Base32 secret e.g. JBSWY3DPEHPK3PXP"/></label><div className="advance-toggle"><label className="advance-check"><input type="checkbox" data-testid="advance-mode-toggle" checked={form.advance_mode||false} onChange={e=>setForm({...form,advance_mode:e.target.checked,advance_passphrase:''})}/><Lock size={14}/> Enable Advance Mode</label>{form.advance_mode&&<label className="advance-pass">Secret Passphrase (you must remember this — no recovery)<input data-testid="advance-passphrase-input" type="password" autoComplete="new-password" value={form.advance_passphrase||''} onChange={e=>setForm({...form,advance_passphrase:e.target.value})} placeholder="e.g. elephant892"/></label>}</div><button className="primary wide" data-testid="save-item-button">{editing?'Save changes':'Encrypt & save'} <LockKeyhole size={16}/></button></form></div>}
+    {/* Item Form Modal — Enhanced with Tags, Notes, Custom Fields */}
+    {showForm&&<div className="modal-backdrop"><form className="modal item-form-modal" onSubmit={save} data-testid="item-form"><button type="button" className="modal-close icon-btn" data-testid="close-item-modal" onClick={()=>{setShowForm(false);setEditing(null);resetForm()}}><X/></button><p className="eyebrow">{editing?'EDIT VALUE':'NEW VALUE'}</p><h2>{editing?'Update protected value':'Add to your vault'}</h2>
+      <label>Name<input data-testid="item-name-input" value={form.name} onChange={e=>setForm({...form,name:e.target.value})} required placeholder="e.g. Wi-Fi password"/></label>
+      <label>Value<div className="gen-row"><textarea data-testid="item-value-input" autoComplete={autoComp} value={form.value} onChange={e=>setForm({...form,value:e.target.value})} required placeholder="Your secret value" rows="4"/><button type="button" className="gen-inline" data-testid="generate-inline-button" onClick={()=>setForm({...form,value:mkPwd(genOpts)})} title="Generate password"><Wand2 size={14}/> Generate</button></div>
+        <div className="strength-meter" data-testid="password-strength-meter"><div className="strength-top"><span>Password strength</span><b className={`strength-${strength.level}`} data-testid="password-strength-label">{strength.label}</b></div><div className="strength-track"><div className={`strength-fill strength-${strength.level}`} data-testid="password-strength-bar" style={{width:`${strength.score}%`,backgroundColor:strength.level==='strong'?'var(--green)':strength.level==='fair'?'#f59e0b':strength.level==='weak'?'var(--red)':'transparent'}}/></div></div>
+      </label>
+      <label>Category<input list="cat-opts" data-testid="item-category-input" value={form.category} onChange={e=>setForm({...form,category:e.target.value})} placeholder="e.g. Login, API key…"/><datalist id="cat-opts">{categories.map(c=><option key={c} value={c}/>)}</datalist></label>
 
-    {/* Generator */}
-    {showGen&&<div className="modal-backdrop"><div className="modal gen-modal" data-testid="generator-modal"><button type="button" className="modal-close icon-btn" data-testid="close-generator" onClick={()=>setShowGen(false)}><X/></button><p className="eyebrow">SECURITY TOOL</p><h2>Password Generator</h2><div className="gen-output" data-testid="generated-password">{genPwd||'—'}</div><div className="gen-controls"><label className="gen-option">Length: <b>{genOpts.length}</b><input type="range" min="8" max="64" value={genOpts.length} onChange={e=>{const o={...genOpts,length:+e.target.value};setGenOpts(o);setGenPwd(mkPwd(o))}}/></label><label className="gen-option"><input type="checkbox" checked={genOpts.upper} onChange={e=>{const o={...genOpts,upper:e.target.checked};setGenOpts(o);setGenPwd(mkPwd(o))}}/> A–Z Uppercase</label><label className="gen-option"><input type="checkbox" checked={genOpts.lower} onChange={e=>{const o={...genOpts,lower:e.target.checked};setGenOpts(o);setGenPwd(mkPwd(o))}}/> a–z Lowercase</label><label className="gen-option"><input type="checkbox" checked={genOpts.nums} onChange={e=>{const o={...genOpts,nums:e.target.checked};setGenOpts(o);setGenPwd(mkPwd(o))}}/> 0–9 Numbers</label><label className="gen-option"><input type="checkbox" checked={genOpts.syms} onChange={e=>{const o={...genOpts,syms:e.target.checked};setGenOpts(o);setGenPwd(mkPwd(o))}}/> !@# Symbols</label></div><div className="gen-actions"><button type="button" className="secondary" data-testid="regenerate-button" onClick={()=>setGenPwd(mkPwd(genOpts))}><RefreshCw size={15}/> Regenerate</button><button type="button" className="primary" data-testid="copy-generated-button" onClick={()=>{copyText(genPwd);toast.success('Password copied!')}}><Copy size={15}/> Copy</button></div></div></div>}
+      {/* Tags */}
+      <div className="form-section" data-testid="tags-section">
+        <label className="form-section-label"><Tag size={13}/> Tags</label>
+        <div className="tags-input-row">
+          <input data-testid="tag-input" value={tagInput} onChange={e=>setTagInput(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'){e.preventDefault();addTag()}}} placeholder="Add tag and press Enter"/>
+          <button type="button" className="tag-add-btn" data-testid="tag-add-btn" onClick={addTag}><Plus size={14}/></button>
+        </div>
+        {(form.tags||[]).length>0&&<div className="form-tags">{form.tags.map(t=><span key={t} className="form-tag" data-testid={`form-tag-${t}`}>{t}<button type="button" onClick={()=>removeTag(t)}><X size={10}/></button></span>)}</div>}
+      </div>
+
+      {/* Favorite */}
+      <label className="fav-toggle-form" data-testid="favorite-toggle">
+        <input type="checkbox" checked={form.favorite||false} onChange={e=>setForm({...form,favorite:e.target.checked})}/>
+        <Star size={14}/> Mark as favorite
+      </label>
+
+      {/* Notes */}
+      <label>Notes <span className="muted-sm">(optional)</span>
+        <textarea data-testid="item-notes-input" value={form.notes||''} onChange={e=>setForm({...form,notes:e.target.value})} placeholder="Add private notes about this item..." rows="3" className="notes-textarea"/>
+      </label>
+
+      {/* Custom Fields */}
+      <div className="form-section" data-testid="custom-fields-section">
+        <div className="form-section-header"><label className="form-section-label"><Hash size={13}/> Custom Fields</label><button type="button" className="cf-add-btn" data-testid="add-custom-field" onClick={addCustomField}><Plus size={13}/> Add field</button></div>
+        {(form.custom_fields||[]).map((cf,i)=>(
+          <div key={i} className="cf-row" data-testid={`custom-field-${i}`}>
+            <input placeholder="Label" value={cf.key} onChange={e=>updateCustomField(i,'key',e.target.value)} className="cf-key"/>
+            <input placeholder="Value" value={cf.value} onChange={e=>updateCustomField(i,'value',e.target.value)} className="cf-value"/>
+            <button type="button" className="cf-remove" onClick={()=>removeCustomField(i)}><X size={13}/></button>
+          </div>
+        ))}
+      </div>
+
+      <label>Authenticator Secret (TOTP) — optional<input data-testid="item-totp-input" type="text" value={form.totp_secret||''} onChange={e=>setForm({...form,totp_secret:e.target.value})} placeholder="Base32 secret e.g. JBSWY3DPEHPK3PXP"/></label>
+      <div className="advance-toggle"><label className="advance-check"><input type="checkbox" data-testid="advance-mode-toggle" checked={form.advance_mode||false} onChange={e=>setForm({...form,advance_mode:e.target.checked,advance_passphrase:''})}/><Lock size={14}/> Enable Advance Mode</label>{form.advance_mode&&<label className="advance-pass">Secret Passphrase (you must remember this — no recovery)<input data-testid="advance-passphrase-input" type="password" autoComplete="new-password" value={form.advance_passphrase||''} onChange={e=>setForm({...form,advance_passphrase:e.target.value})} placeholder="e.g. elephant892"/></label>}</div>
+      <button className="primary wide" data-testid="save-item-button">{editing?'Save changes':'Encrypt & save'} <LockKeyhole size={16}/></button>
+    </form></div>}
+
+    {/* Password Generator Pro */}
+    {showGen&&<div className="modal-backdrop"><div className="modal gen-modal" data-testid="generator-modal"><button type="button" className="modal-close icon-btn" data-testid="close-generator" onClick={()=>setShowGen(false)}><X/></button><p className="eyebrow">SECURITY TOOL</p><h2>Password Generator</h2>
+      <div className="gen-mode-tabs">
+        <button type="button" className={genOpts.mode!=='passphrase'?'active':''} data-testid="gen-mode-random" onClick={()=>{const o={...genOpts,mode:'random'};setGenOpts(o);setGenPwd(mkPwd(o))}}>Random</button>
+        <button type="button" className={genOpts.mode==='passphrase'?'active':''} data-testid="gen-mode-passphrase" onClick={()=>{const o={...genOpts,mode:'passphrase'};setGenOpts(o);setGenPwd(mkPwd(o))}}>Passphrase</button>
+      </div>
+      <div className="gen-output" data-testid="generated-password">{genPwd||'—'}</div>
+      <div className="gen-controls">
+        <label className="gen-option">Length: <b>{genOpts.length}</b><input type="range" min="8" max="64" value={genOpts.length} onChange={e=>{const o={...genOpts,length:+e.target.value};setGenOpts(o);setGenPwd(mkPwd(o))}}/></label>
+        {genOpts.mode!=='passphrase'&&<><label className="gen-option"><input type="checkbox" checked={genOpts.upper} onChange={e=>{const o={...genOpts,upper:e.target.checked};setGenOpts(o);setGenPwd(mkPwd(o))}}/> A–Z Uppercase</label>
+        <label className="gen-option"><input type="checkbox" checked={genOpts.lower} onChange={e=>{const o={...genOpts,lower:e.target.checked};setGenOpts(o);setGenPwd(mkPwd(o))}}/> a–z Lowercase</label>
+        <label className="gen-option"><input type="checkbox" checked={genOpts.nums} onChange={e=>{const o={...genOpts,nums:e.target.checked};setGenOpts(o);setGenPwd(mkPwd(o))}}/> 0–9 Numbers</label>
+        <label className="gen-option"><input type="checkbox" checked={genOpts.syms} onChange={e=>{const o={...genOpts,syms:e.target.checked};setGenOpts(o);setGenPwd(mkPwd(o))}}/> !@# Symbols</label></>}
+      </div>
+      <div className="gen-actions"><button type="button" className="secondary" data-testid="regenerate-button" onClick={()=>setGenPwd(mkPwd(genOpts))}><RefreshCw size={15}/> Regenerate</button><button type="button" className="primary" data-testid="copy-generated-button" onClick={()=>{copyText(genPwd);toast.success('Password copied!')}}><Copy size={15}/> Copy</button></div>
+    </div></div>}
 
     {/* Advance Mode Prompt */}
     {showAdvancePrompt&&<div className="modal-backdrop"><div className="modal adv-modal" data-testid="advance-prompt-modal"><button type="button" className="modal-close icon-btn" onClick={()=>{setShowAdvancePrompt(null);setAdvanceInput('')}}><X/></button><p className="eyebrow">ADVANCE MODE</p><h2><Lock size={18}/> Enter Passphrase</h2><p className="muted">This item is locked with an extra passphrase. Enter it to proceed.</p><input data-testid="advance-passphrase-field" type="password" className="adv-input" value={advanceInput} onChange={e=>setAdvanceInput(e.target.value)} onKeyDown={e=>e.key==='Enter'&&submitAdvancePassphrase()} placeholder="Your secret passphrase" autoFocus/><button className="primary wide" data-testid="advance-submit-button" onClick={submitAdvancePassphrase}><Lock size={15}/> Unlock</button></div></div>}
@@ -352,10 +512,10 @@ function Vault({user,onLogout}){
     {showShares&&<div className="modal-backdrop"><div className="modal shares-modal" data-testid="my-shares-modal"><button type="button" className="modal-close icon-btn" data-testid="close-shares-modal" onClick={()=>setShowShares(false)}><X/></button><p className="eyebrow">ACTIVE LINKS</p><h2>My Share Links</h2><p className="muted" style={{fontSize:'12px',marginBottom:'12px'}}>To create a share link: click the <Share2 size={11} style={{display:'inline',verticalAlign:'middle'}}/> icon on any vault item.</p>{activeShares.length===0?<p className="muted">No active share links yet.</p>:<div className="shares-list">{activeShares.map((s,i)=><div key={i} className="share-row" data-testid={`share-row-${i}`}><div><b className="share-item-name">{s.item_name}</b><span className="share-exp">Expires {new Date(s.expires).toLocaleString()}</span></div><button className="icon-btn danger" data-testid={`revoke-share-${i}`} onClick={()=>revokeShare(s.token)} title="Revoke"><Trash2 size={15}/></button></div>)}</div>}</div></div>}
 
     {/* Share Picker */}
-    {showSharePicker&&<div className="modal-backdrop"><div className="modal share-picker-modal" data-testid="share-picker-modal"><button type="button" className="modal-close icon-btn" data-testid="close-share-picker" onClick={()=>setShowSharePicker(null)}><X/></button><p className="eyebrow">SECURE SHARE</p><h2>Share "{showSharePicker.name}"</h2><p className="muted">Choose how long the link stays active. Anyone with it can view the value:</p><div className="expiry-options">{[{h:1,label:'1 hour'},{h:12,label:'12 hours'},{h:24,label:'24 hours'},{h:168,label:'7 days'}].map(opt=><button key={opt.h} className="expiry-btn" data-testid={`expiry-${opt.h}h`} onClick={()=>shareItem(showSharePicker,opt.h)}>{opt.label}</button>)}</div></div></div>}
+    {showSharePicker&&<div className="modal-backdrop"><div className="modal share-picker-modal" data-testid="share-picker-modal"><button type="button" className="modal-close icon-btn" data-testid="close-share-picker" onClick={()=>setShowSharePicker(null)}><X/></button><p className="eyebrow">SECURE SHARE</p><h2>Share "{showSharePicker.name}"</h2><p className="muted">Choose how long the link stays active:</p><div className="expiry-options">{[{h:1,label:'1 hour'},{h:12,label:'12 hours'},{h:24,label:'24 hours'},{h:168,label:'7 days'}].map(opt=><button key={opt.h} className="expiry-btn" data-testid={`expiry-${opt.h}h`} onClick={()=>shareItem(showSharePicker,opt.h)}>{opt.label}</button>)}</div></div></div>}
 
     {/* Share Link Display */}
-    {shareModal&&<div className="modal-backdrop"><div className="modal" data-testid="share-modal"><button type="button" className="modal-close icon-btn" data-testid="close-share-modal" onClick={()=>setShareModal(null)}><X/></button><p className="eyebrow">SECURE SHARE</p><h2>Share "{shareModal.item.name}"</h2><p className="muted">This link expires in {shareModal.hours} hours. Anyone with it can view the value.</p><div className="share-link-box" data-testid="share-link-display">{shareModal.link}</div><button className="primary wide" data-testid="copy-share-link-button" onClick={()=>{copyText(shareModal.link);toast.success('Link copied to clipboard!')}}><Copy size={15}/> Copy link</button></div></div>}
+    {shareModal&&<div className="modal-backdrop"><div className="modal" data-testid="share-modal"><button type="button" className="modal-close icon-btn" data-testid="close-share-modal" onClick={()=>setShareModal(null)}><X/></button><p className="eyebrow">SECURE SHARE</p><h2>Share "{shareModal.item.name}"</h2><p className="muted">This link expires in {shareModal.hours} hours.</p><div className="share-link-box" data-testid="share-link-display">{shareModal.link}</div><button className="primary wide" data-testid="copy-share-link-button" onClick={()=>{copyText(shareModal.link);toast.success('Link copied!')}}><Copy size={15}/> Copy link</button></div></div>}
 
     {/* Security Report */}
     {showSec&&secReport&&<div className="modal-backdrop"><div className="modal sec-modal" data-testid="security-report-modal"><button type="button" className="modal-close icon-btn" data-testid="close-sec-modal" onClick={()=>setShowSec(false)}><X/></button><p className="eyebrow">VAULT HEALTH</p><h2>Security Report</h2><div className="sec-score-ring" data-testid="security-score"><span className="sec-score-num" style={{color:secReport.score>=80?'var(--green)':secReport.score>=50?'#fbbf24':'var(--red)'}}>{secReport.score}</span><span className="sec-score-label">/ 100</span></div><div className="sec-stats"><div className="sec-stat"><span className="sec-stat-n" style={{color:'var(--green)'}}>{secReport.total}</span><span>Total items</span></div><div className="sec-stat"><span className="sec-stat-n" style={{color:secReport.weak.length?'var(--red)':'var(--green)'}}>{secReport.weak.length}</span><span>Weak (&lt;10 chars)</span></div><div className="sec-stat"><span className="sec-stat-n" style={{color:secReport.reused.length?'#fbbf24':'var(--green)'}}>{secReport.reused.length}</span><span>Reused</span></div><div className="sec-stat"><span className="sec-stat-n" style={{color:secReport.old.length?'#fbbf24':'var(--green)'}}>{secReport.old.length}</span><span>Old (90d+)</span></div></div>
@@ -368,32 +528,27 @@ function Vault({user,onLogout}){
     {/* Audit Log */}
     {showAudit&&<div className="modal-backdrop"><div className="modal audit-modal" data-testid="audit-modal"><button type="button" className="modal-close icon-btn" data-testid="close-audit-modal" onClick={()=>setShowAudit(false)}><X/></button><p className="eyebrow">SECURITY</p><h2>Activity Log</h2>{auditLogs.length===0?<p className="muted">No activity yet.</p>:<div className="audit-list">{auditLogs.map((e,i)=><div key={i} className="audit-row" data-testid={`audit-row-${i}`}><span className={`audit-badge ab-${e.action.toLowerCase()}`}>{e.action}</span><span className="audit-detail">{e.detail||'—'}</span><span className="audit-time">{new Date(e.ts).toLocaleString()}</span></div>)}</div>}</div></div>}
 
-    {/* Settings Modal — Expanded */}
-    {showSettings&&<div className="modal-backdrop"><div className="modal settings-modal" data-testid="settings-modal" style={{maxHeight:'88vh',overflowY:'auto'}}><button type="button" className="modal-close icon-btn" data-testid="close-settings" onClick={()=>setShowSettings(false)}><X/></button><p className="eyebrow">PREFERENCES</p><h2>Settings</h2><div className="settings-list">
-      <div className="settings-row" data-testid="theme-setting"><div className="settings-info"><b>Theme</b><p>Choose the vault look that feels best for this device.</p></div><div className="theme-toggle" role="group" aria-label="Theme"><button type="button" data-testid="theme-dark-button" className={settings.theme!=='light'?'active':''} onClick={()=>saveTheme('dark')}><Moon size={14}/> Dark</button><button type="button" data-testid="theme-light-button" className={settings.theme==='light'?'active':''} onClick={()=>saveTheme('light')}><Sun size={14}/> Light</button></div></div>
-      <div className="settings-row" data-testid="autofill-setting"><div className="settings-info"><b>Browser Autofill</b><p>Allow browser to autofill and suggest saving vault values in forms.</p></div><label className="toggle-switch"><input type="checkbox" checked={settings.autofill} onChange={e=>saveSettingsPref({...settings,autofill:e.target.checked})}/><span className="toggle-slider"/></label></div>
-      <div className="settings-row" data-testid="pin-setting"><div className="settings-info"><b>Vault PIN Lock</b><p>Auto-locks vault after your selected inactivity timeout.</p></div><label className="toggle-switch"><input type="checkbox" checked={pinEnabled} onChange={e=>{if(!e.target.checked){localStorage.removeItem('vault_pin_hash');setPinEnabled(false);setShowPinLock(false);setSetupPinMode(false);if(inactivityRef.current)clearTimeout(inactivityRef.current);toast.success('PIN lock disabled')}else setSetupPinMode(true)}}/><span className="toggle-slider"/></label></div>
-      <div className="settings-row" data-testid="auto-lock-setting"><div className="settings-info"><b>Auto-Lock Timer</b><p>Lock the vault after inactivity when PIN Lock is enabled.</p></div><select data-testid="auto-lock-select" className="settings-select" value={settings.autoLockMinutes||5} onChange={e=>saveAutoLock(Number(e.target.value))}><option value="1">1 min</option><option value="5">5 min</option><option value="15">15 min</option><option value="30">30 min</option></select></div>
-      {setupPinMode&&<div className="pin-setup-section"><p className="muted" style={{fontSize:'12px',margin:'0 0 10px'}}>Set your 4-digit PIN:</p><div className="pin-setup-row"><input type="password" maxLength="4" inputMode="numeric" data-testid="pin-setup-input" value={setupPinValue} onChange={e=>setSetupPinValue(e.target.value.replace(/\D/g,'').slice(0,4))} placeholder="1234" className="pin-input-field"/><input type="password" maxLength="4" inputMode="numeric" data-testid="pin-confirm-input" value={setupPinConfirm} onChange={e=>setSetupPinConfirm(e.target.value.replace(/\D/g,'').slice(0,4))} placeholder="Confirm" className="pin-input-field"/><button className="primary" data-testid="pin-confirm-btn" onClick={async()=>{if(setupPinValue.length!==4||setupPinValue!==setupPinConfirm){setSetupPinErr('PINs must be 4 digits and match');return}const h=await hashPin(setupPinValue);localStorage.setItem('vault_pin_hash',h);setPinEnabled(true);setSetupPinMode(false);setSetupPinValue('');setSetupPinConfirm('');setSetupPinErr('');toast.success('PIN lock enabled!')}}>Set PIN</button></div>{setupPinErr&&<p style={{color:'var(--red)',fontSize:'12px',marginTop:'6px'}}>{setupPinErr}</p>}</div>}
-      <div className="settings-divider"><span>LOGIN HISTORY</span></div>
-      <div className="settings-row login-history-panel" data-testid="login-history-setting"><div className="settings-info"><b><History size={14} style={{display:'inline',verticalAlign:'middle',marginRight:'6px'}}/>Last 5 Logins</b><p>Recent successful access events for this vault.</p>{historyLoaded?<div className="login-history-list" data-testid="login-history-list">{loginHistory.length?loginHistory.map((h,i)=><div className="login-history-item" key={h.id} data-testid={`login-history-${i}`}><Monitor size={13}/><span>{new Date(h.ts).toLocaleString()}</span><b>{h.device}</b></div>):<span className="muted-sm">No login history yet.</span>}</div>:null}</div><button type="button" className="secondary" data-testid="load-login-history" onClick={loadLoginHistory}>Load</button></div>
-      <div className="settings-divider"><span>LAYER 2 — BIRTHDAY</span></div>
-      {!hasBirthday?<div className="settings-row clickable" data-testid="birthday-setup-btn" onClick={()=>{setShowBirthdaySetup(true);setShowSettings(false)}}><div className="settings-info"><b>Set Birthday</b><p>Add Layer 2 protection. You'll verify your birthday on every login.</p></div><Calendar size={16} style={{color:'var(--green)',flexShrink:0}}/></div>
-      :<div className="settings-row"><div className="settings-info"><b>Birthday Set</b><p>Layer 2 is active. You verify your birthday on every login.</p></div><Check size={16} style={{color:'var(--green)',flexShrink:0}}/></div>}
-      <div className="settings-divider"><span>LAYER 3 — CRYPTO TYPE PASS</span></div>
-      <div className="settings-row" data-testid="l3-toggle-setting"><div className="settings-info"><b>Layer 3 Lock</b><p>Require crypto type pass verification on every login. You must pass a quiz to enable.</p></div><label className="toggle-switch"><input type="checkbox" checked={l3Enabled} onChange={e=>toggleL3(e.target.checked)}/><span className="toggle-slider"/></label></div>
-      <div className={`settings-row${!l3Viewed?' clickable':''}`} data-testid="l3-view-btn" onClick={!l3Viewed?async()=>{const d=await loadL3Passwords();if(d?.passwords){setShowL3View(true);setShowSettings(false)}}:undefined}><div className="settings-info"><b>View My 20 Passwords</b><p>{l3Viewed?'Already viewed once — use Export to save them offline.':'See your current Layer 3 crypto type passwords (one-time only).'}</p></div>{l3Viewed?<span className="l3-viewed-badge" data-testid="l3-already-viewed"><Check size={15}/> Viewed</span>:<ArrowUpRight size={16} style={{color:'var(--muted)',flexShrink:0}}/>}</div>
-      <div className="settings-row clickable" data-testid="l3-export-btn" onClick={exportL3Passwords}><div className="settings-info"><b>Export Passwords</b><p>Download your 20 crypto type passwords as a text file.</p></div><Download size={16} style={{color:'var(--muted)',flexShrink:0}}/></div>
-      <div className="settings-row clickable" data-testid="l3-regen-btn" onClick={()=>{setShowL3Regen(true);setShowSettings(false)}}><div className="settings-info"><b>Regenerate Passwords</b><p>Get new random passwords. Max 3 changes per month. Requires password.</p></div><RefreshCw size={16} style={{color:'var(--muted)',flexShrink:0}}/></div>
-      <div className="settings-divider"><span>SECURITY</span></div>
-      <div className="settings-row" data-testid="disclaimer-toggle-setting"><div className="settings-info"><b>Disclaimer Notice</b><p>Show disclaimer about password leak responsibility on login.</p></div><label className="toggle-switch"><input type="checkbox" checked={disclaimerEnabled} onChange={e=>toggleDisclaimer(e.target.checked)}/><span className="toggle-slider"/></label></div>
-      <div className="settings-divider"><span>HARDCORE MODE</span></div>
-      <div className="settings-row clickable" data-testid="hardcore-btn" onClick={async()=>{await loadHardcore();setShowSecuritySettings(true);setShowSettings(false)}}><div className="settings-info"><b><Skull size={14} style={{display:'inline',verticalAlign:'middle',marginRight:'6px'}}/>Hardcore Mode</b><p>Auto-delete account on too many failures. Customize limits.</p></div><ArrowUpRight size={16} style={{color:'var(--red)',flexShrink:0}}/></div>
-      <div className="settings-divider"><span>LEGAL & ACCOUNT</span></div>
-      <div className="settings-row clickable" data-testid="terms-btn" onClick={()=>{setShowTerms(true);setShowSettings(false)}}><div className="settings-info"><b>Terms & Conditions</b></div><FileText size={16} style={{color:'var(--muted)',flexShrink:0}}/></div>
-      <div className="settings-row clickable" data-testid="privacy-btn" onClick={()=>{setShowPrivacy(true);setShowSettings(false)}}><div className="settings-info"><b>Privacy Policy</b></div><FileText size={16} style={{color:'var(--muted)',flexShrink:0}}/></div>
-      <div className="settings-row clickable danger-row" data-testid="logout-settings-btn" onClick={onLogout}><div className="settings-info"><b style={{color:'var(--red)'}}>Log Out</b><p>Sign out of your vault.</p></div><LogOut size={16} style={{color:'var(--red)',flexShrink:0}}/></div>
-    </div></div></div>}
+    {/* Settings Panel */}
+    {showSettings&&<SettingsPanel
+      user={user} settings={settings} onSaveSettings={saveSettingsPref} onSaveTheme={saveTheme} onSaveAutoLock={saveAutoLock} onLogout={onLogout} onClose={()=>setShowSettings(false)}
+      pinEnabled={pinEnabled}
+      onSetupPin={async(pin)=>{const h=await hashPin(pin);localStorage.setItem('vault_pin_hash',h);setPinEnabled(true);toast.success('PIN lock enabled!')}}
+      onDisablePin={()=>{localStorage.removeItem('vault_pin_hash');setPinEnabled(false);setShowPinLock(false);if(inactivityRef.current)clearTimeout(inactivityRef.current);toast.success('PIN lock disabled')}}
+      l3Enabled={l3Enabled} onToggleL3={toggleL3} onViewL3={viewL3} onExportL3={exportL3Passwords} onRegenL3={()=>{setShowL3Regen(true);setShowSettings(false)}}
+      onOpenHardcore={async()=>{await loadHardcore();setShowSecuritySettings(true);setShowSettings(false)}}
+      hasBirthday={hasBirthday} onSetupBirthday={()=>{setShowBirthdaySetup(true);setShowSettings(false)}}
+      disclaimerEnabled={disclaimerEnabled} onToggleDisclaimer={toggleDisclaimer}
+      loginHistory={loginHistory} onLoadHistory={loadLoginHistory} historyLoaded={historyLoaded}
+    />}
+
+    {/* L3 Password View Prompt (when L3 enabled) */}
+    {showL3PwdPrompt&&<div className="modal-backdrop"><div className="modal" data-testid="l3-pwd-prompt-modal">
+      <button type="button" className="modal-close icon-btn" onClick={()=>{setShowL3PwdPrompt(false);setL3ViewPwd('')}}><X/></button>
+      <p className="eyebrow">LAYER 3 — LOCKED</p><h2><Lock size={18}/> Enter Password</h2>
+      <p className="muted">Layer 3 is enabled. Enter your account password to view your crypto passwords.</p>
+      <label>Account Password<input data-testid="l3-view-pwd-input" type="password" value={l3ViewPwd} onChange={e=>setL3ViewPwd(e.target.value)} onKeyDown={e=>e.key==='Enter'&&submitL3ViewPwd()} placeholder="Your account password"/></label>
+      <button className="primary wide" data-testid="l3-view-pwd-submit" onClick={submitL3ViewPwd} disabled={!l3ViewPwd}><Lock size={15}/> Unlock & View</button>
+    </div></div>}
 
     {/* L3 Quiz to Enable */}
     {l3QuizMode&&<div className="modal-backdrop"><div className="modal" data-testid="l3-enable-quiz-modal"><button type="button" className="modal-close icon-btn" onClick={()=>setL3QuizMode(null)}><X/></button><p className="eyebrow">LAYER 3 VERIFICATION</p><h2>Prove you know your passwords</h2><p className="muted">Enter the exact passwords for these positions to enable Layer 3.</p>
@@ -413,7 +568,7 @@ function Vault({user,onLogout}){
       <button className="primary wide" data-testid="l3-regen-submit" onClick={regenL3} disabled={!l3RegenPwd}><RefreshCw size={15}/> Generate New Passwords</button>
     </div></div>}
 
-    {/* Birthday Setup for legacy users */}
+    {/* Birthday Setup */}
     {showBirthdaySetup&&<div className="modal-backdrop"><div className="modal" data-testid="birthday-setup-modal"><button type="button" className="modal-close icon-btn" onClick={()=>{setShowBirthdaySetup(false);setBdaySetup('');setBdaySetupConfirm('')}}><X/></button><p className="eyebrow">LAYER 2 SETUP</p><h2>Set Your Birthday</h2>
       <p className="muted">This adds Layer 2 protection. You'll need to verify your birthday on every login. <b style={{color:'var(--red)'}}>This cannot be changed later.</b></p>
       <label>Birthday<input data-testid="bday-setup-input" type="date" value={bdaySetup} onChange={e=>setBdaySetup(e.target.value)} required/></label>
@@ -423,13 +578,13 @@ function Vault({user,onLogout}){
 
     {/* Hardcore Mode Settings */}
     {showSecuritySettings&&hardcoreData&&<div className="modal-backdrop"><div className="modal hardcore-modal" data-testid="hardcore-modal"><button type="button" className="modal-close icon-btn" onClick={()=>setShowSecuritySettings(false)}><X/></button><p className="eyebrow">DANGER ZONE</p><h2><Skull size={20}/> Hardcore Mode</h2>
-      <p className="muted" style={{color:'#ff6b74'}}>When enabled, your account and ALL passwords will be PERMANENTLY DELETED if you exceed the failure limits below. This cannot be undone.</p>
-      <div className="settings-row" style={{marginTop:'16px'}}><div className="settings-info"><b>Enable Hardcore Mode</b></div><label className="toggle-switch"><input type="checkbox" checked={hardcoreData.enabled} onChange={e=>{if(e.target.checked&&!window.confirm('Are you sure? This will permanently delete your account if you fail too many times. THIS CANNOT BE UNDONE.'))return;saveHardcore({...hardcoreData.settings,enabled:e.target.checked})}}/><span className="toggle-slider"/></label></div>
+      <p className="muted" style={{color:'#ff6b74'}}>When enabled, your account and ALL passwords will be PERMANENTLY DELETED if you exceed the failure limits below.</p>
+      <div className="settings-row" style={{marginTop:'16px'}}><div className="settings-info"><b>Enable Hardcore Mode</b></div><label className="toggle-switch"><input type="checkbox" checked={hardcoreData.enabled} onChange={e=>{if(e.target.checked&&!window.confirm('Are you sure? This will permanently delete your account if you fail too many times.'))return;saveHardcore({...hardcoreData.settings,enabled:e.target.checked})}}/><span className="toggle-slider"/></label></div>
       <div className="hardcore-limits">
-        <label>Max consecutive fail days before deletion<input data-testid="hc-fail-days" type="number" min="1" max="30" value={hardcoreData.settings.max_login_fail_days} onChange={e=>setHardcoreData(d=>({...d,settings:{...d.settings,max_login_fail_days:+e.target.value}}))}/></label>
-        <label>Max total login failures before deletion<input data-testid="hc-total-fails" type="number" min="4" max="100" value={hardcoreData.settings.max_login_fails} onChange={e=>setHardcoreData(d=>({...d,settings:{...d.settings,max_login_fails:+e.target.value}}))}/></label>
+        <label>Max consecutive fail days<input data-testid="hc-fail-days" type="number" min="1" max="30" value={hardcoreData.settings.max_login_fail_days} onChange={e=>setHardcoreData(d=>({...d,settings:{...d.settings,max_login_fail_days:+e.target.value}}))}/></label>
+        <label>Max total login failures<input data-testid="hc-total-fails" type="number" min="4" max="100" value={hardcoreData.settings.max_login_fails} onChange={e=>setHardcoreData(d=>({...d,settings:{...d.settings,max_login_fails:+e.target.value}}))}/></label>
         <label>Max tries per day<input data-testid="hc-daily-tries" type="number" min="1" max="20" value={hardcoreData.settings.max_daily_tries} onChange={e=>setHardcoreData(d=>({...d,settings:{...d.settings,max_daily_tries:+e.target.value}}))}/></label>
-        <label>Max Layer 3 failures before deletion<input data-testid="hc-l3-fails" type="number" min="1" max="50" value={hardcoreData.settings.max_layer3_fails} onChange={e=>setHardcoreData(d=>({...d,settings:{...d.settings,max_layer3_fails:+e.target.value}}))}/></label>
+        <label>Max Layer 3 failures<input data-testid="hc-l3-fails" type="number" min="1" max="50" value={hardcoreData.settings.max_layer3_fails} onChange={e=>setHardcoreData(d=>({...d,settings:{...d.settings,max_layer3_fails:+e.target.value}}))}/></label>
       </div>
       <button className="primary wide" data-testid="hc-save-btn" style={{marginTop:'12px'}} onClick={()=>saveHardcore({...hardcoreData.settings,enabled:hardcoreData.enabled})}>Save Hardcore Settings</button>
       {hardcoreData.failed_logins&&<div className="hc-status" style={{marginTop:'16px',padding:'12px',background:'rgba(255,107,116,.08)',border:'1px solid rgba(255,107,116,.2)',borderRadius:'8px',fontSize:'12px',color:'var(--muted)'}}>
@@ -440,59 +595,74 @@ function Vault({user,onLogout}){
       </div>}
     </div></div>}
 
-    {/* Disclaimer Popup */}
+    {/* Disclaimer */}
     {showDisclaimer&&<div className="modal-backdrop" style={{zIndex:10}}><div className="modal disclaimer-modal" data-testid="disclaimer-modal">
       <div style={{textAlign:'center',marginBottom:'16px'}}><AlertTriangle size={40} style={{color:'#fbbf24'}}/></div>
       <h2 style={{textAlign:'center'}}>Important Disclaimer</h2>
       <div className="disclaimer-text" data-testid="disclaimer-text">
         <p>By using TopPass5, you acknowledge and agree to the following:</p>
-        <ul><li>TopPass5 stores your passwords with AES encryption on our servers.</li><li><b>If any password is leaked, we are not responsible.</b></li><li>You are solely responsible for keeping your recovery phrase, birthday, and Layer 3 crypto type passwords safe.</li><li>There is NO password recovery mechanism — if you lose your credentials, your vault is permanently inaccessible.</li><li>Hardcore Mode can permanently delete your account. Use at your own risk.</li></ul>
+        <ul><li>TopPass5 stores your passwords with AES encryption on our servers.</li><li><b>If any password is leaked, we are not responsible.</b></li><li>You are solely responsible for keeping your credentials safe.</li><li>There is NO password recovery mechanism.</li><li>Hardcore Mode can permanently delete your account.</li></ul>
         <p style={{fontWeight:'600',color:'var(--red)'}}>By clicking "I Understand & Accept", you agree to these terms.</p>
       </div>
-      <button className="primary wide" data-testid="disclaimer-accept-btn" onClick={acceptDisclaimer} style={{marginTop:'12px'}}><Check size={16}/> I Understand & Accept</button>
+      <button className="primary wide" data-testid="disclaimer-accept-btn" onClick={()=>setShowDisclaimer(false)} style={{marginTop:'12px'}}><Check size={16}/> I Understand & Accept</button>
     </div></div>}
 
-    {/* Terms & Conditions */}
+    {/* Terms */}
     {showTerms&&<div className="modal-backdrop"><div className="modal legal-modal" data-testid="terms-modal" style={{maxHeight:'88vh',overflowY:'auto'}}><button type="button" className="modal-close icon-btn" onClick={()=>setShowTerms(false)}><X/></button><p className="eyebrow">LEGAL</p><h2>Terms & Conditions</h2><div className="legal-text">
-      <p><b>1. Service Description</b><br/>TopPass5 is a password and secure value management service that provides AES-encrypted storage for sensitive data.</p>
-      <p><b>2. User Responsibilities</b><br/>You are responsible for maintaining the confidentiality of your account credentials, recovery phrase, birthday verification, and Layer 3 crypto type passwords. You must not share access credentials with unauthorized parties.</p>
-      <p><b>3. No Liability for Leaks</b><br/>While we implement industry-standard encryption, TopPass5 and its operators assume NO liability for any data breaches, password leaks, or unauthorized access to your stored values. Use at your own risk.</p>
-      <p><b>4. Account Deletion</b><br/>If Hardcore Mode is enabled, your account and all data may be permanently and irreversibly deleted upon exceeding configured failure thresholds. This action cannot be undone.</p>
-      <p><b>5. No Recovery</b><br/>There is no forgot password mechanism for Layer 1 (email/password) or Layer 2 (birthday). Recovery is only possible via your 12-word recovery phrase.</p>
-      <p><b>6. Service Changes</b><br/>We reserve the right to modify, suspend, or discontinue the service at any time without prior notice.</p>
+      <p><b>1. Service Description</b><br/>TopPass5 is a password and secure value management service that provides AES-encrypted storage.</p>
+      <p><b>2. User Responsibilities</b><br/>You are responsible for maintaining the confidentiality of your account credentials.</p>
+      <p><b>3. No Liability for Leaks</b><br/>TopPass5 assumes NO liability for any data breaches or unauthorized access. Use at your own risk.</p>
+      <p><b>4. Account Deletion</b><br/>Hardcore Mode may permanently delete your account upon exceeding failure thresholds.</p>
+      <p><b>5. No Recovery</b><br/>There is no forgot password mechanism for Layer 1 or Layer 2.</p>
+      <p><b>6. Service Changes</b><br/>We reserve the right to modify or discontinue the service at any time.</p>
     </div></div></div>}
 
-    {/* Privacy Policy */}
+    {/* Privacy */}
     {showPrivacy&&<div className="modal-backdrop"><div className="modal legal-modal" data-testid="privacy-modal" style={{maxHeight:'88vh',overflowY:'auto'}}><button type="button" className="modal-close icon-btn" onClick={()=>setShowPrivacy(false)}><X/></button><p className="eyebrow">LEGAL</p><h2>Privacy Policy</h2><div className="legal-text">
-      <p><b>1. Data Collection</b><br/>We collect your email address, hashed password, hashed birthday, and encrypted vault data. We do not store plaintext passwords or secrets.</p>
-      <p><b>2. Encryption</b><br/>All vault items are encrypted with AES (Fernet) before storage. Birthday and recovery phrases are stored as one-way SHA-256 hashes.</p>
-      <p><b>3. Data Usage</b><br/>Your data is used solely to provide the vault service. We do not sell, share, or monetize your personal information.</p>
-      <p><b>4. Data Retention</b><br/>Data is retained for as long as your account is active. Upon account deletion (manual or via Hardcore Mode), all data is permanently removed.</p>
-      <p><b>5. Security Measures</b><br/>We employ HTTPS, AES encryption, bcrypt password hashing, JWT authentication, and multi-layer verification to protect your data.</p>
-      <p><b>6. Third Parties</b><br/>We may use Google OAuth for authentication. No vault data is shared with third parties.</p>
+      <p><b>1. Data Collection</b><br/>We collect your email, hashed password, hashed birthday, and encrypted vault data.</p>
+      <p><b>2. Encryption</b><br/>All vault items are encrypted with AES (Fernet) before storage.</p>
+      <p><b>3. Data Usage</b><br/>Your data is used solely to provide the vault service.</p>
+      <p><b>4. Data Retention</b><br/>Data is retained for as long as your account is active.</p>
+      <p><b>5. Security Measures</b><br/>We employ HTTPS, AES encryption, bcrypt, JWT, and multi-layer verification.</p>
     </div></div></div>}
 
-    {/* Help Modal */}
+    {/* Help */}
     {showHelp&&<div className="modal-backdrop"><div className="modal help-modal" data-testid="help-modal"><button type="button" className="modal-close icon-btn" data-testid="close-help" onClick={()=>setShowHelp(false)}><X/></button><p className="eyebrow">FEATURE GUIDE</p><h2>TopPass5 — Complete Guide</h2><div className="help-content">
-      <div className="help-section"><div className="help-sec-icon"><LockKeyhole size={18}/></div><div><h3>Vault Items</h3><p>Store any secret — passwords, API keys, notes, Wi-Fi, bank PINs. Every value is AES-encrypted. Use <b>Reveal</b>, <b>Copy</b>, <b>Edit</b>, or <b>Delete</b> from the action icons on each item. Click the <b>gear icon</b> to view item properties quickly.</p></div></div>
-      <div className="help-section help-section-adv"><div className="help-sec-icon adv-icon"><Lock size={18}/></div><div><h3>Advance Mode <span className="adv-badge"><Lock size={10}/> Extra Lock</span></h3><p>A super-secret layer for your most sensitive items. Each item gets its own custom passphrase that only you know.</p><ul className="help-list"><li><b>Reveal, Copy, Edit:</b> all require the extra passphrase first.</li><li><b>Sharing disabled:</b> Advance Mode items cannot be shared via links.</li><li><b>Download disabled:</b> Cannot be exported individually.</li><li><b>4-attempt lockout:</b> After 4 wrong passphrases, the item locks for 3 days. No exceptions.</li><li><b>No recovery:</b> If you forget the passphrase, the item is permanently inaccessible.</li><li><b>Best for:</b> Crypto seed phrases, banking PINs, master passwords.</li></ul></div></div>
-      <div className="help-section"><div className="help-sec-icon"><ShieldCheck size={18}/></div><div><h3>Layer 3 — Recovery Phrase</h3><p>12-word crypto-wallet style backup generated at signup. Use it to sign in OR reset your password without email. Store offline (paper, safe). We cannot recover this if lost.</p></div></div>
-      <div className="help-section"><div className="help-sec-icon"><Share2 size={18}/></div><div><h3>Secure Share Links</h3><p>Click the <b>share icon</b> on any item (not Advance Mode) to create a time-limited link (1h/12h/24h/7d). Anyone with the link can view the value — no account needed. Manage and revoke active links via <b>My Share Links</b> in the sidebar.</p></div></div>
-      <div className="help-section"><div className="help-sec-icon"><Timer size={18}/></div><div><h3>TOTP / Authenticator</h3><p>Store 2FA Base32 secrets. Click the <b>clock icon</b> to generate the current 6-digit OTP code (auto-copied). Compatible with all TOTP apps.</p></div></div>
-      <div className="help-section"><div className="help-sec-icon"><ShieldAlert size={18}/></div><div><h3>Breach Monitoring</h3><p>Checks passwords against HaveIBeenPwned automatically on login. Badge on Security Report shows how many are breached. Use the <b>shield icon</b> per item or "Re-check all" for a fresh scan.</p></div></div>
-      <div className="help-section"><div className="help-sec-icon"><Gauge size={18}/></div><div><h3>Security Report</h3><p>Vault health score 0–100. Detects <b>weak</b> (&lt;10 chars), <b>reused</b>, and <b>old</b> (90d+) passwords. <b>Click any item name</b> in the report to jump directly to editing it.</p></div></div>
-      <div className="help-section"><div className="help-sec-icon"><Settings size={18}/></div><div><h3>Settings — PIN Lock &amp; Autofill</h3><p><b>Vault PIN Lock:</b> Set a 4-digit PIN and choose your auto-lock timeout. <b>Browser Autofill:</b> Disable if you don't want your browser saving vault values.</p></div></div>
+      <div className="help-section"><div className="help-sec-icon"><LockKeyhole size={18}/></div><div><h3>Vault Items</h3><p>Store any secret — passwords, API keys, notes. Every value is AES-encrypted. Use Reveal, Copy, Edit, Delete from the action icons.</p></div></div>
+      <div className="help-section"><div className="help-sec-icon"><Star size={18}/></div><div><h3>Favorites & Tags</h3><p>Star your most-used items for quick access. Add tags to organize and filter your vault. Use the search bar to find items by name, tag, or notes.</p></div></div>
+      <div className="help-section help-section-adv"><div className="help-sec-icon adv-icon"><Lock size={18}/></div><div><h3>Advance Mode</h3><p>Extra passphrase lock for your most sensitive items. 4-attempt lockout, no recovery.</p></div></div>
+      <div className="help-section"><div className="help-sec-icon"><Share2 size={18}/></div><div><h3>Secure Share Links</h3><p>Create time-limited links to share any non-Advance item.</p></div></div>
+      <div className="help-section"><div className="help-sec-icon"><History size={18}/></div><div><h3>Password History</h3><p>Track the last 10 password changes for any item. Click the clock icon on vault items to view history.</p></div></div>
+      <div className="help-section"><div className="help-sec-icon"><ShieldAlert size={18}/></div><div><h3>Breach & Duplicate Detection</h3><p>Auto-checks passwords against HaveIBeenPwned. DUP badge shows when multiple items share the same password.</p></div></div>
+      <div className="help-section"><div className="help-sec-icon"><Gauge size={18}/></div><div><h3>Security Report</h3><p>Vault health score 0–100. Detects weak, reused, and old passwords.</p></div></div>
+      <div className="help-section"><div className="help-sec-icon"><Settings size={18}/></div><div><h3>Settings</h3><p>Theme, PIN Lock, Auto-Lock Timer, Layer 3 management, Hardcore Mode, and more.</p></div></div>
     </div></div></div>}
 
-    {/* Item Properties Modal */}
+    {/* Item Properties Modal — Enhanced with Tags, Notes, Custom Fields */}
     {showItemProps&&<div className="modal-backdrop"><div className="modal item-props-modal" data-testid="item-props-modal"><button type="button" className="modal-close icon-btn" onClick={()=>setShowItemProps(null)}><X/></button><p className="eyebrow">ITEM PROPERTIES</p><h2>{showItemProps.name}</h2><div className="props-grid">
       <div className="prop-row"><span>Category</span><b>{showItemProps.category}</b></div>
-      <div className="prop-row"><span>Advance Mode</span><b>{showItemProps.advance_mode?<span className="adv-badge"><Lock size={11}/> {isItemLocked(showItemProps)?'Locked (3-day)':'Active'}</span>:<span className="muted-sm">Off</span>}</b></div>
-      <div className="prop-row"><span>Sharing</span><b>{showItemProps.advance_mode?<span className="muted-sm">Disabled (Advance Mode)</span>:'Enabled'}</b></div>
+      <div className="prop-row"><span>Favorite</span><b>{showItemProps.favorite?<span style={{color:'var(--blue)'}}><Star size={13}/> Yes</span>:'No'}</b></div>
+      <div className="prop-row"><span>Tags</span><b>{(showItemProps.tags||[]).length>0?showItemProps.tags.join(', '):<span className="muted-sm">None</span>}</b></div>
+      <div className="prop-row"><span>Advance Mode</span><b>{showItemProps.advance_mode?<span className="adv-badge"><Lock size={11}/> {isItemLocked(showItemProps)?'Locked':'Active'}</span>:<span className="muted-sm">Off</span>}</b></div>
       <div className="prop-row"><span>TOTP</span><b>{showItemProps.has_totp?'Configured':'Not set'}</b></div>
       <div className="prop-row"><span>Created</span><b>{new Date(showItemProps.created_at).toLocaleDateString()}</b></div>
       <div className="prop-row"><span>Last updated</span><b>{new Date(showItemProps.updated_at).toLocaleDateString()}</b></div>
+      {(showItemProps.notes||'').trim()&&<div className="prop-row prop-notes"><span>Notes</span><p className="prop-notes-text">{showItemProps.notes}</p></div>}
+      {(showItemProps.custom_fields||[]).length>0&&<><div className="prop-divider">Custom Fields</div>{showItemProps.custom_fields.map((cf,i)=><div key={i} className="prop-row"><span>{cf.key}</span><b>{cf.value}</b></div>)}</>}
     </div><button className="primary wide" data-testid="props-edit-button" onClick={()=>{setShowItemProps(null);startEdit(showItemProps)}}><Pencil size={15}/> Edit This Item</button></div></div>}
+
+    {/* Password History Modal */}
+    {showHistory&&<div className="modal-backdrop"><div className="modal" data-testid="password-history-modal"><button type="button" className="modal-close icon-btn" onClick={()=>{setShowHistory(null);setHistoryData([])}}><X/></button><p className="eyebrow">PASSWORD HISTORY</p><h2>{showHistory.name}</h2>
+      <p className="muted">Previous values for this item (most recent first).</p>
+      {historyData.length===0?<p className="muted" style={{marginTop:'16px'}}>No password changes recorded yet.</p>:
+      <div className="history-list">{historyData.map((h,i)=>(
+        <div key={h.id} className="history-row" data-testid={`history-row-${i}`}>
+          <div className="history-meta"><span>{new Date(h.changed_at).toLocaleString()}</span></div>
+          <div className="history-value">{h.value}</div>
+          <button className="icon-btn" onClick={()=>{copyText(h.value);toast.success('Old value copied!')}}><Copy size={14}/></button>
+        </div>
+      ))}</div>}
+    </div></div>}
 
     {/* PIN Lock Screen */}
     {showPinLock&&<div className="pin-lock-overlay" data-testid="pin-lock-screen"><div className="pin-lock-card"><div className="pin-lock-icon"><LockKeyhole size={36}/></div><h2>Vault Locked</h2><p>Enter your 4-digit PIN to continue</p><div className="pin-dots">{[0,1,2,3].map(i=><div key={i} className={`pin-dot${pinInput.length>i?' filled':''}`}/>)}</div><div className="pin-numpad">{[1,2,3,4,5,6,7,8,9,'',0,'⌫'].map((k,i)=><button key={i} className={`pin-key${k===''?' pin-key-empty':''}`} disabled={k===''} data-testid={typeof k==='number'?`pin-key-${k}`:k==='⌫'?'pin-key-del':undefined} onClick={()=>k==='⌫'?setPinInput(p=>p.slice(0,-1)):typeof k==='number'&&setPinInput(p=>p.length<4?p+String(k):p)}>{k}</button>)}</div>{pinError&&<p className="pin-error" data-testid="pin-error">{pinError}</p>}<button className="link-btn pin-forgot" onClick={()=>{localStorage.removeItem('vault_pin_hash');setPinEnabled(false);setShowPinLock(false);toast.info('PIN disabled. Re-enable in Settings.')}}>Forgot PIN (disables lock)</button></div></div>}
@@ -552,4 +722,3 @@ export default function App(){
   if(showAuth)return <Auth onLogin={onLogin}/>;
   return <LandingPage onGetStarted={()=>{setShowLanding(false);setShowAuth(true)}}/>;
 }
-
