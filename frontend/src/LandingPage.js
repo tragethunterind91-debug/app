@@ -127,6 +127,32 @@ function SecurityDeepDive(){
   );
 }
 
+function ExecutiveHome(){
+  const pillars=[
+    ['Private vault core','Encrypted storage for passwords, keys, PINs, secure notes and sensitive values.'],
+    ['Layered access','Email password, birthday checkpoint, optional Crypto Type Pass and PIN lock.'],
+    ['User-controlled risk','Advance Mode, breach monitoring, temporary lockouts and Hardcore Mode stay in your hands.']
+  ];
+  return <section className="tp5-exec" data-testid="home-executive-section">
+    <Reveal className="tp5-exec-copy"><p className="tp5-eyebrow"><ShieldCheck size={12}/> BUILT LIKE INFRASTRUCTURE</p><h2>A calm command center for everything you cannot afford to lose.</h2><p>TopPass5 is designed as a serious security product, not a simple notes app. The home experience explains the protection model clearly before a user reaches the vault.</p></Reveal>
+    <Reveal delay={.12} className="tp5-exec-panel"><div className="tp5-terminal-top"><span/><span/><span/></div>{pillars.map(([t,d],i)=><div className="tp5-terminal-row" key={t} data-testid={`home-pillar-${i}`}><b>0{i+1}</b><div><h3>{t}</h3><p>{d}</p></div><Check size={17}/></div>)}</Reveal>
+  </section>;
+}
+
+function HomeShowcase(){
+  const cards=[
+    ['Security posture','Live vault health, weak password alerts, reused value detection and age-based reminders.'],
+    ['Sensitive item gates','Advance Mode asks for an extra passphrase before reveal, copy, edit or delete.'],
+    ['Share without chaos','Create expiring links with live countdowns and revoke active links whenever needed.'],
+    ['Owner oversight','A separate admin area keeps operational monitoring away from the user vault.']
+  ];
+  return <section className="tp5-showcase" data-testid="home-showcase-section"><Reveal className="tp5-section-head"><p className="tp5-eyebrow">PRODUCT SURFACE</p><h2>The homepage now sells the trust before the vault opens.</h2></Reveal><div className="tp5-show-grid">{cards.map(([t,d],i)=><Reveal key={t} delay={i*.06} className="tp5-show-card"><span>{String(i+1).padStart(2,'0')}</span><h3>{t}</h3><p>{d}</p></Reveal>)}</div></section>;
+}
+
+function TrustStack(){
+  return <section className="tp5-trust-stack" data-testid="home-trust-stack"><Reveal className="tp5-trust-inner"><div><p className="tp5-eyebrow"><Fingerprint size={12}/> TRUST STACK</p><h2>Every layer is visible. Every dangerous action is deliberate.</h2></div><div className="tp5-trust-steps">{['Hash identity checkpoints','Encrypt every vault value','Prompt before sensitive actions','Show recent access history','Lock after failed attempts'].map((s,i)=><div key={s} className="tp5-trust-step"><b>{i+1}</b><span>{s}</span></div>)}</div></Reveal></section>;
+}
+
 function ComparisonSection(){
   const rows=['Multi-layer authentication','Self-destruct Hardcore Mode','Per-item Advance passphrase gate','Zero-knowledge identity hashing','Crypto Type Pass quiz on login','No forgot-password backdoor'];
   return (
@@ -204,6 +230,9 @@ export default function LandingPage({onGetStarted}){
       <FeatureGrid/>
       <HowItWorks/>
       <SecurityDeepDive/>
+      <ExecutiveHome/>
+      <HomeShowcase/>
+      <TrustStack/>
       <ComparisonSection/>
       <FAQSection/>
       <CTASection onGetStarted={onGetStarted}/>

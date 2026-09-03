@@ -54,6 +54,9 @@ Build a website for saving passwords/values with tight security (TopPass5). User
 - Settings Login History showing the last 5 successful login events with timestamp and device info
 - Auth screen “+” quick toggle between login/register and readable wrong email/password errors
 - Auth hardening: httpOnly access cookie set alongside JWT response, global 5-failure temporary lockout, backend credentialed CORS configuration, admin seed password refresh
+- Public home page expanded into a longer, more professional pre-login experience with executive/security/trust sections
+- Admin panel separated to `/admin`; admin/owner links removed from the main vault UI
+- Website URL / Smart Fill UI removed from vault add/edit forms, item rows, and item properties
 
 ## Latest Verification — 2026-09-03
 - `python -m py_compile backend/server.py` passed
@@ -61,6 +64,7 @@ Build a website for saving passwords/values with tight security (TopPass5). User
 - Public API sanity checks passed for wrong-password error, admin birthday login, login history, auth cookie, and brute-force lockout
 - `/app/backend/tests/test_iteration11_regression.py` passed locally: 15/15 with `REACT_APP_BACKEND_URL=http://localhost:8001`, `MONGO_URL`, and `DB_NAME`
 - Testing agent iteration 11 verified requested frontend flows and Advance Mode/L3 regression; its external public OPTIONS CORS check remains platform-edge controlled, while backend localhost CORS now returns explicit origin + credentials
+- UI smoke tested: long home sections render, `/admin` requires login and loads admin panel, main vault has no admin links, add/edit form has no website URL field
 
 ## Backlog
 - P1: Continue remaining vault/security backlog: folders/tags, favorites, bulk actions, password history, duplicate detector, CSV import/export polishing

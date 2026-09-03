@@ -10,13 +10,17 @@ const hdr = () => ({headers: {Authorization: 'Bearer ' + localStorage.getItem('v
 export default function AdminPanel({user, onLogout}) {
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
   const load = () => {
     client.get('/admin/stats', hdr()).then(r => {
       setStats(r.data);
+      setError('');
       setLoading(false);
-    }).catch(() => {
-      toast.error('Failed to load stats');
+    }).catch((e) => {
+      const msg=e.response?.status===403?'Owner access only. Sign in with the admin account.':'Failed to load stats';
+      setError(msg);
+      toast.error(msg);
       setLoading(false);
     });
   };
@@ -44,7 +48,9 @@ export default function AdminPanel({user, onLogout}) {
         <button className="icon-btn" onClick={onLogout} title="Logout"><LogOut size={18}/></button>
       </div>
 
-      {stats && (
+      {error && <div className="admin-denied" data-testid="admin-access-denied"><AlertCircle size={22}/><h2>{error}</h2><button className="primary" data-testid="admin-denied-logout" onClick={onLogout}>Sign in again</button></div>}
+
+      {!error && stats && (
         <>
           <div className="admin-stats-grid">
             <div className="admin-stat-card" data-testid="stat-total-users">
