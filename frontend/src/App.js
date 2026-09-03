@@ -164,6 +164,7 @@ function Vault({user,onLogout}){
   const [pinEnabled,setPinEnabled]=useState(!!localStorage.getItem('vault_pin_hash'));
   const [loginHistory,setLoginHistory]=useState([]);
   const [historyLoaded,setHistoryLoaded]=useState(false);
+  const [advanceGlobalLockUntil,setAdvanceGlobalLockUntil]=useState(user.advance_global_locked_until||null);
   const [mobileNavOpen,setMobileNavOpen]=useState(false);
   const [showItemProps,setShowItemProps]=useState(null);
   const [showDisclaimer,setShowDisclaimer]=useState(false);
@@ -192,6 +193,7 @@ function Vault({user,onLogout}){
   const strength=strengthOf(form.value||'');
 
   useEffect(()=>{document.documentElement.setAttribute('data-theme',settings.theme||localStorage.getItem('tp5_theme')||'dark')},[settings.theme]);
+  useEffect(()=>{setAdvanceGlobalLockUntil(user.advance_global_locked_until||null)},[user.advance_global_locked_until]);
 
   // PIN inactivity timer
   useEffect(()=>{
@@ -231,6 +233,7 @@ function Vault({user,onLogout}){
   const load=()=>{
     client.get('/items',authHeader()).then(r=>{setItems(r.data);setTimeout(()=>runBackgroundBreachCheck(r.data),800);loadDuplicates()}).catch(()=>onLogout());
     client.get('/preferences',authHeader()).then(r=>{if(r.data.categories)setCategories(r.data.categories);setSettings(s=>({...s,autofill:typeof r.data.autofill==='boolean'?r.data.autofill:s.autofill,theme:r.data.theme||localStorage.getItem('tp5_theme')||'dark',autoLockMinutes:r.data.autoLockMinutes||Number(localStorage.getItem('tp5_auto_lock'))||5}))}).catch(()=>{});
+    client.get('/auth/me',authHeader()).then(r=>setAdvanceGlobalLockUntil(r.data.advance_global_locked_until||null)).catch(()=>{});
   };
   useEffect(()=>{load()},[]);
 
@@ -268,7 +271,56 @@ function Vault({user,onLogout}){
 
   const startEdit=async(item)=>{if(item.advance_mode){setAdvanceInput('');setShowAdvancePrompt({item,action:'edit'});return}let v=values[item.id];if(!v){const r=await client.get(`/items/${item.id}/value`,authHeader());v=r.data.value;setValues(p=>({...p,[item.id]:v}))}setEditing(item);setForm({name:item.name,value:v,category:item.category,totp_secret:'',url:item.url||'',advance_mode:item.advance_mode||false,advance_passphrase:'',tags:item.tags||[],favorite:item.favorite||false,notes:item.notes||'',custom_fields:item.custom_fields||[]});setShowForm(true)};
 
-  const submitAdvancePassphrase=async()=>{if(!showAdvancePrompt)return;const{item,action}=showAdvancePrompt;try{const passphrase=advanceInput;if(action==='delete'){if(window.confirm('Delete this item permanently?')){await client.delete(`/items/${item.id}`,authHeader({'X-Advance-Passphrase':passphrase}));setShowAdvancePrompt(null);setAdvanceInput('');toast.success('Item deleted');load()}return}if(action==='totp'){const secret=await client.get(`/items/${item.id}/totp`,authHeader({'X-Advance-Passphrase':passphrase}));const code=await getTOTP(secret.data.secret);setShowAdvancePrompt(null);setAdvanceInput('');copyText(code).catch(()=>{});toast.success(`OTP: ${code.slice(0,3)} ${code.slice(3)} — copied!`,{duration:6000});return}const r=await client.post(`/items/${item.id}/advance-reveal`,{passphrase},authHeader());const val=r.data.value;setValues(p=>({...p,[item.id]:val}));setAdvancePassphrases(p=>({...p,[item.id]:passphrase}));setShowAdvancePrompt(null);setAdvanceInput('');if(action==='reveal'){setVisible(p=>({...p,[item.id]:true}))}else if(action==='copy'){await copyText(val);toast.success('Copied!')}else if(action==='edit'){setEditing(item);setForm({name:item.name,value:val,category:item.category,totp_secret:'',url:item.url||'',advance_mode:true,advance_passphrase:'',tags:item.tags||[],favorite:item.favorite||false,notes:item.notes||'',custom_fields:item.custom_fields||[]});setShowForm(true)}}catch(e){const msg=e.response?.data?.detail||'Wrong passphrase';toast.error(msg,{duration:msg.includes('lock')||msg.includes('attempt')?8000:3000})}};
+  const submitAdvancePassphrase=async()=>{
+    if(!showAdvancePrompt)return;
+    const {item,action}=showAdvancePrompt;
+    try{
+      const passphrase=advanceInput;
+      if(action==='delete'){
+        if(window.confirm('Delete this item permanently?')){
+          await client.delete(`/items/${item.id}`,authHeader({'X-Advance-Passphrase':passphrase}));
+          setShowAdvancePrompt(null);
+          setAdvanceInput('');
+          toast.success('Item deleted');
+          load();
+        }
+        return;
+      }
+      if(action==='totp'){
+        const secret=await client.get(`/items/${item.id}/totp`,authHeader({'X-Advance-Passphrase':passphrase}));
+        const code=await getTOTP(secret.data.secret);
+        setShowAdvancePrompt(null);
+        setAdvanceInput('');
+        copyText(code).catch(()=>{});
+        toast.success(`OTP: ${code.slice(0,3)} ${code.slice(3)} — copied!`,{duration:6000});
+        return;
+      }
+      const r=await client.post(`/items/${item.id}/advance-reveal`,{passphrase},authHeader());
+      const val=r.data.value;
+      setValues(p=>({...p,[item.id]:val}));
+      setAdvancePassphrases(p=>({...p,[item.id]:passphrase}));
+      setShowAdvancePrompt(null);
+      setAdvanceInput('');
+      if(action==='reveal')setVisible(p=>({...p,[item.id]:true}));
+      else if(action==='copy'){
+        await copyText(val);
+        toast.success('Copied!');
+      }else if(action==='edit'){
+        setEditing(item);
+        setForm({name:item.name,value:val,category:item.category,totp_secret:'',url:item.url||'',advance_mode:true,advance_passphrase:'',tags:item.tags||[],favorite:item.favorite||false,notes:item.notes||'',custom_fields:item.custom_fields||[]});
+        setShowForm(true);
+      }
+    }catch(e){
+      const status=e.response?.status;
+      const msg=e.response?.data?.detail||'Wrong passphrase';
+      if(status===423){
+        setShowAdvancePrompt(null);
+        setAdvanceInput('');
+        load();
+      }
+      toast.error(msg,{duration:msg.includes('lock')||msg.includes('attempt')?8000:3000});
+    }
+  };
 
   const toggleFavorite=async(id)=>{
     try{
@@ -381,6 +433,7 @@ function Vault({user,onLogout}){
     try{await client.post('/auth/set-birthday',{birthday:bdaySetup},authHeader());setHasBirthday(true);setShowBirthdaySetup(false);setBdaySetup('');setBdaySetupConfirm('');toast.success('Birthday set! You will need it on every login.')}catch(e){toast.error(e.response?.data?.detail||'Failed to set birthday')}
   };
   const isItemLocked=(item)=>item.advance_locked_until&&new Date(item.advance_locked_until)>new Date();
+  const hasAdvanceGlobalLock=advanceGlobalLockUntil&&new Date(advanceGlobalLockUntil)>new Date();
   const autoComp=settings.autofill?undefined:'off';
 
   const clickSecItem=(name)=>{const it=items.find(x=>x.name===name);if(it){setShowSec(false);startEdit(it)}};
@@ -434,6 +487,7 @@ function Vault({user,onLogout}){
     <main className="vault-main">
       <header className="topbar"><div><p className="eyebrow">PERSONAL VAULT / TODAY</p><h1>Good to see you, {user.name?.split(' ')[0]}</h1></div><div className="top-actions"><label className="secondary top-btn" data-testid="import-button" title="Import from backup JSON"><Upload size={16}/> Import<input type="file" accept=".json" style={{display:'none'}} onChange={importVault}/></label><button className="secondary top-btn" data-testid="export-all-button" onClick={exportAll}><Download size={16}/> Export</button><button className="secondary top-btn" data-testid="generator-button" onClick={()=>{setGenPwd(mkPwd(genOpts));setShowGen(true)}}><Wand2 size={16}/> Generator</button><button className="primary" data-testid="add-item-button" onClick={()=>{setEditing(null);setForm({name:'',value:mkPwd(genOpts),category:'Secret',totp_secret:'',url:'',advance_mode:false,advance_passphrase:'',tags:[],favorite:false,notes:'',custom_fields:[]});setShowForm(true)}}><Plus size={17}/> Add value</button></div></header>
       <section className="metrics"><div><span>Protected values</span><strong data-testid="protected-count">{items.length.toString().padStart(2,'0')}</strong></div><div><span>Security health</span><strong className="green">Excellent <Check size={17}/></strong></div><div><span>Duplicates</span><strong className={duplicateIds.length>0?'dup-warn':'green'} data-testid="dup-metric">{duplicateIds.length>0?duplicateIds.length:'0'} {duplicateIds.length===0&&<Check size={17}/>}</strong></div></section>
+      {hasAdvanceGlobalLock&&<div className="login-attempts-warn" data-testid="advance-global-lock-banner"><AlertTriangle size={14}/><div><b>Advance Mode safety block active</b><p>Half of your protected items reached the failure limit, so every Advance Mode item is paused until {new Date(advanceGlobalLockUntil).toLocaleString()}.</p></div></div>}
 
       <VaultItems
         items={items} query={query} setQuery={setQuery} cat={cat} setCat={setCat} categories={categories}
@@ -511,7 +565,7 @@ function Vault({user,onLogout}){
     </div></div>}
 
     {/* Advance Mode Prompt */}
-    {showAdvancePrompt&&<div className="modal-backdrop"><div className="modal adv-modal" data-testid="advance-prompt-modal"><button type="button" className="modal-close icon-btn" data-testid="advance-prompt-close" onClick={()=>{setShowAdvancePrompt(null);setAdvanceInput('')}}><X/></button><p className="eyebrow">ADVANCE MODE</p><h2><Lock size={18}/> Enter Passphrase</h2><p className="muted">This item is locked with an extra passphrase. Enter it to proceed.</p><input data-testid="advance-passphrase-field" type="password" className="adv-input" value={advanceInput} onChange={e=>setAdvanceInput(e.target.value)} onKeyDown={e=>e.key==='Enter'&&advanceInput.trim()&&submitAdvancePassphrase()} placeholder="Your secret passphrase" autoFocus/><button className="primary wide" data-testid="advance-submit-button" disabled={!advanceInput.trim()} onClick={submitAdvancePassphrase}><Lock size={15}/> Unlock</button></div></div>}
+    {showAdvancePrompt&&<div className="modal-backdrop"><div className="modal adv-modal" data-testid="advance-prompt-modal"><button type="button" className="modal-close icon-btn" data-testid="advance-prompt-close" onClick={()=>{setShowAdvancePrompt(null);setAdvanceInput('')}}><X/></button><p className="eyebrow">ADVANCE MODE</p><h2><Lock size={18}/> Enter Passphrase</h2><p className="muted">This item is locked with an extra passphrase. Enter it to proceed.</p><p className="muted" data-testid="advance-prompt-limit-note">4 wrong tries lock only this item. If 50% of your Advance Mode items get locked, all Advance Mode items pause for 3 days.</p><input data-testid="advance-passphrase-field" type="password" className="adv-input" value={advanceInput} onChange={e=>setAdvanceInput(e.target.value)} onKeyDown={e=>e.key==='Enter'&&advanceInput.trim()&&submitAdvancePassphrase()} placeholder="Your secret passphrase" autoFocus/><button className="primary wide" data-testid="advance-submit-button" disabled={!advanceInput.trim()} onClick={submitAdvancePassphrase}><Lock size={15}/> Unlock</button></div></div>}
 
     {/* My Share Links */}
     {showShares&&<div className="modal-backdrop"><div className="modal shares-modal" data-testid="my-shares-modal"><button type="button" className="modal-close icon-btn" data-testid="close-shares-modal" onClick={()=>setShowShares(false)}><X/></button><p className="eyebrow">ACTIVE LINKS</p><h2>My Share Links</h2><p className="muted" style={{fontSize:'12px',marginBottom:'12px'}}>To create a share link: click the <Share2 size={11} style={{display:'inline',verticalAlign:'middle'}}/> icon on any vault item.</p>{activeShares.length===0?<p className="muted">No active share links yet.</p>:<div className="shares-list">{activeShares.map((s,i)=><div key={i} className="share-row" data-testid={`share-row-${i}`}><div><b className="share-item-name">{s.item_name}</b><span className="share-exp">Expires {new Date(s.expires).toLocaleString()}</span></div><button className="icon-btn danger" data-testid={`revoke-share-${i}`} onClick={()=>revokeShare(s.token)} title="Revoke"><Trash2 size={15}/></button></div>)}</div>}</div></div>}

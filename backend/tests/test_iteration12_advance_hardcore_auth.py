@@ -222,6 +222,70 @@ def test_advance_mode_share_and_bulk_delete_rejected(api_session, api_base_url):
     assert bulk.status_code == 403
 
 
+def test_advance_mode_item_only_lock_then_half_locked_global_block(api_session, api_base_url):
+    _, _, _, token = register_user(api_session, api_base_url)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    item_ids = []
+    for idx in range(3):
+        created = api_session.post(
+            f"{api_base_url}/api/items",
+            headers=headers,
+            json={
+                "name": f"TEST_ADV_LOCK_{idx}",
+                "value": f"adv-lock-secret-{idx}",
+                "category": "Secret",
+                "advance_mode": True,
+                "advance_passphrase": f"adv-pass-{idx}",
+            },
+        )
+        assert created.status_code == 200
+        item_ids.append(created.json()["id"])
+
+    first_wrong_statuses = []
+    for _ in range(4):
+        wrong = api_session.post(
+            f"{api_base_url}/api/items/{item_ids[0]}/advance-reveal",
+            headers=headers,
+            json={"passphrase": "wrong-pass"},
+        )
+        first_wrong_statuses.append(wrong.status_code)
+    assert first_wrong_statuses[:3] == [401, 401, 401]
+    assert first_wrong_statuses[3] == 423
+
+    second_item_ok = api_session.post(
+        f"{api_base_url}/api/items/{item_ids[1]}/advance-reveal",
+        headers=headers,
+        json={"passphrase": "adv-pass-1"},
+    )
+    assert second_item_ok.status_code == 200
+    assert second_item_ok.json()["value"] == "adv-lock-secret-1"
+
+    second_wrong_responses = []
+    for _ in range(4):
+        wrong = api_session.post(
+            f"{api_base_url}/api/items/{item_ids[1]}/advance-reveal",
+            headers=headers,
+            json={"passphrase": "wrong-pass"},
+        )
+        second_wrong_responses.append(wrong)
+    assert [resp.status_code for resp in second_wrong_responses[:3]] == [401, 401, 401]
+    assert second_wrong_responses[3].status_code == 423
+    assert 'Safety block activated' in second_wrong_responses[3].text
+
+    global_block = api_session.post(
+        f"{api_base_url}/api/items/{item_ids[2]}/advance-reveal",
+        headers=headers,
+        json={"passphrase": "adv-pass-2"},
+    )
+    assert global_block.status_code == 423
+    assert 'Advance Mode safety block active' in global_block.text
+
+    me = api_session.get(f"{api_base_url}/api/auth/me", headers=headers)
+    assert me.status_code == 200
+    assert me.json().get('advance_global_locked_until')
+
+
 # Hardcore mode behavior: configured 4th failed login should delete account.
 def test_hardcore_fourth_wrong_login_deletes_account(api_session, api_base_url):
     email, password, _, token = register_user(api_session, api_base_url)

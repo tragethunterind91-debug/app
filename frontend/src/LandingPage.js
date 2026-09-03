@@ -83,7 +83,7 @@ function FeatureGrid(){
     {icon:KeyRound,title:'Crypto Type Pass',desc:'20 unique passwords generated for you. Enable it yourself from Settings, whenever you choose — never forced on you at signup.'},
     {icon:Skull,title:'Hardcore Mode',big:true,danger:true,desc:'Optional self-destruct. Exceed your own failure limits and the vault erases itself. No mercy, no recovery.'},
     {icon:EyeOff,title:'Zero-Knowledge',desc:'We never see your passwords in plaintext. Birthdays and crypto passes live only as one-way hashes.'},
-    {icon:ShieldAlert,title:'Advance Mode',desc:'A second passphrase gate on view, copy, edit AND delete for your most sensitive items. Miss it four times, it locks for 3 days.'},
+    {icon:ShieldAlert,title:'Advance Mode',desc:'A second passphrase gate on view, copy, edit AND delete for your most sensitive items. Miss one item 4 times and only that item locks; if 50% of protected items lock, TopPass5 pauses all Advance Mode items for 3 days.'},
   ];
   return (
     <section className="tp5-features" id="tp5-features">
@@ -175,7 +175,7 @@ function FAQSection(){
   const faqs=[
     ['What happens if I forget my birthday or Crypto Type Pass?','There is no recovery — by design. It\'s the price of a vault nobody else can break into, including us.'],
     ['What is Hardcore Mode?','An optional self-destruct. Set your own failure limits, and if they\'re exceeded, your account and every secret inside it are permanently deleted.'],
-    ['What is Advance Mode?','A second passphrase you set per item. Viewing, copying, editing, or deleting that item requires it — four wrong tries locks it for three days.'],
+    ['What is Advance Mode?','A second passphrase you set per item. Viewing, copying, editing, or deleting that item requires it. Four wrong tries lock only that item for three days, but if 50% of your Advance Mode items get locked, TopPass5 pauses every Advance Mode item for three days as a safety block.'],
     ['Can TopPass5 see my passwords?','No. Every value is AES-encrypted before storage, and identity checkpoints like your birthday are one-way hashed. We could not read them even if asked.'],
     ['When do I get my Crypto Type Pass?','Never automatically. After you create your vault, go to Settings and generate it yourself — you decide when to enable it as Layer 3.'],
   ];

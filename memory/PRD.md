@@ -61,8 +61,16 @@ Build a website for saving passwords/values with tight security (TopPass5). User
 - Settings "View My 20 Passwords" Crypto Pass button removed; Export Crypto Pass remains for offline backup
 - Crypto Type Pass one-time API view enforced; export remains available
 - Advance Mode hardened across reveal, edit, delete, TOTP, share, and bulk-delete paths
+- Advance Mode now locks only the failed item after 4 wrong passphrase attempts, and triggers a 3-day vault-wide Advance safety block once locked Advance Mode items reach 50%
 - Hardcore Mode fixed so configured failure limits trigger account/vault deletion immediately instead of being blocked by normal temporary lockout
 - Public website contact section added with official ZNQ Telegram, support/partners email, and X links, plus matching footer links
+
+## Latest Verification — 2026-09-03 Advance Safety Threshold
+- `python -m py_compile backend/server.py` passed
+- `REACT_APP_BACKEND_URL=http://localhost:8001 pytest -q tests/test_iteration12_advance_hardcore_auth.py` passed: 8/8
+- Preview API self-test passed: first Advance item locks after 4 failures, second item still works before threshold, second locked item triggers 50% global safety block, and `/api/auth/me` returns `advance_global_locked_until`
+- Preview UI smoke test passed: Advance Mode prompt shows the new rule text, normal item reveal stays modal-free, and the app remains interactive
+- Testing agent iteration 13 passed requested frontend/backend validation; only remaining CORS preflight warning is platform-edge behavior, not app code
 
 ## Latest Verification — 2026-09-03 Contact Links
 - `python -m py_compile backend/server.py` passed

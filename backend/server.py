@@ -10,6 +10,7 @@ from cryptography.fernet import Fernet
 from jose import jwt, JWTError
 from authlib.integrations.starlette_client import OAuth
 from datetime import datetime, timezone, timedelta
+from math import ceil
 from pathlib import Path
 import os, secrets, uuid, hashlib, string, json, random
 
@@ -32,6 +33,9 @@ def gen_l3_passwords(count=20, length=5):
 
 def hash_birthday(b: str) -> str:
     return hashlib.sha256(b.strip().encode()).hexdigest()
+
+ADVANCE_FAIL_LIMIT = 4
+ADVANCE_LOCK_DAYS = 3
 
 class Credentials(BaseModel):
     email: EmailStr
@@ -104,6 +108,7 @@ def public_user(u):
         'disclaimer_enabled': u.get('disclaimer_enabled', False),
         'hardcore_enabled': u.get('hardcore_enabled', False),
         'l3_viewed': u.get('l3_viewed', False),
+        'advance_global_locked_until': u.get('advance_global_locked_until'),
     }
 def safe_item(doc):
     return {'id': doc['id'], 'name': doc['name'], 'category': doc.get('category','Secret'), 'url': doc.get('url',''), 'advance_mode': doc.get('advance_mode', False), 'advance_locked_until': doc.get('advance_locked_until'), 'created_at': doc['created_at'], 'updated_at': doc['updated_at'], 'has_totp': bool(doc.get('totp_enc')), 'tags': doc.get('tags', []), 'favorite': doc.get('favorite', False), 'notes': doc.get('notes', ''), 'custom_fields': doc.get('custom_fields', [])}
@@ -120,26 +125,88 @@ async def delete_hardcore_account(user, detail: str):
     await db.recovery.delete_many({'user_id': user_id})
     await log_event(user_id, 'HARDCORE_DELETE', detail)
     await db.users.delete_one({'id': user_id})
+
+def parse_iso_datetime(value: str | None):
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    except Exception:
+        return None
+
+def format_lock_remaining(lock_until: datetime, scope: str = 'item'):
+    remaining = max(lock_until - datetime.now(timezone.utc), timedelta())
+    total_hours = max(1, int(remaining.total_seconds() // 3600) + (1 if remaining.total_seconds() % 3600 else 0))
+    if total_hours >= 24:
+        days = ceil(total_hours / 24)
+        unit = 'day' if days == 1 else 'days'
+        target = 'all Advance Mode items are blocked' if scope == 'global' else 'this item is locked'
+        return f'{target}. Try again in {days} {unit}.'
+    unit = 'hour' if total_hours == 1 else 'hours'
+    target = 'all Advance Mode items are blocked' if scope == 'global' else 'this item is locked'
+    return f'{target}. Try again in {total_hours} {unit}.'
+
+async def get_active_advance_global_lock(user_id: str):
+    user = await db.users.find_one({'id': user_id}, {'_id': 0, 'advance_global_locked_until': 1})
+    lock_until = parse_iso_datetime((user or {}).get('advance_global_locked_until'))
+    if lock_until and lock_until > datetime.now(timezone.utc):
+        return lock_until
+    if user and user.get('advance_global_locked_until'):
+        await db.users.update_one({'id': user_id}, {'$unset': {'advance_global_locked_until': ''}})
+    return None
+
+async def maybe_activate_advance_global_lock(user_id: str):
+    existing_lock = await get_active_advance_global_lock(user_id)
+    if existing_lock:
+        active_locked_items = await db.items.count_documents({
+            'user_id': user_id,
+            'advance_mode': True,
+            'advance_locked_until': {'$gt': datetime.now(timezone.utc).isoformat()},
+        })
+        total_items = await db.items.count_documents({'user_id': user_id, 'advance_mode': True})
+        return {'lock_until': existing_lock, 'locked_items': active_locked_items, 'total_items': total_items}
+    total_items = await db.items.count_documents({'user_id': user_id, 'advance_mode': True})
+    if total_items <= 0:
+        return None
+    locked_items = await db.items.count_documents({
+        'user_id': user_id,
+        'advance_mode': True,
+        'advance_locked_until': {'$gt': datetime.now(timezone.utc).isoformat()},
+    })
+    threshold = max(1, ceil(total_items / 2))
+    if locked_items < threshold:
+        return None
+    lock_until = datetime.now(timezone.utc) + timedelta(days=ADVANCE_LOCK_DAYS)
+    await db.users.update_one({'id': user_id}, {'$set': {'advance_global_locked_until': lock_until.isoformat()}})
+    await log_event(user_id, 'ADVANCE_GLOBAL_LOCK', f'{locked_items}/{total_items} Advance Mode items locked')
+    return {'lock_until': lock_until, 'locked_items': locked_items, 'total_items': total_items}
+
 async def verify_advance_access(doc, user_id: str, passphrase: str | None):
     if not doc.get('advance_mode'):
         return
+    global_lock = await get_active_advance_global_lock(user_id)
+    if global_lock:
+        raise HTTPException(423, f'Advance Mode safety block active: {format_lock_remaining(global_lock, scope="global")}')
     locked_until = doc.get('advance_locked_until')
-    if locked_until and datetime.fromisoformat(locked_until) > datetime.now(timezone.utc):
-        remaining = datetime.fromisoformat(locked_until) - datetime.now(timezone.utc)
-        days = remaining.days + 1
-        raise HTTPException(423, f'Item locked after too many failed attempts. Try again in {days} day{"s" if days != 1 else ""}.')
+    item_lock = parse_iso_datetime(locked_until)
+    if item_lock and item_lock > datetime.now(timezone.utc):
+        raise HTTPException(423, f'Item locked after too many failed attempts. {format_lock_remaining(item_lock)}')
     if not doc.get('advance_hash') or not pwd.verify(passphrase or '', doc['advance_hash']):
         fails = doc.get('advance_failed_attempts', 0) + 1
         upd = {'advance_failed_attempts': fails}
-        if fails >= 4:
-            upd['advance_locked_until'] = (datetime.now(timezone.utc) + timedelta(days=3)).isoformat()
+        if fails >= ADVANCE_FAIL_LIMIT:
+            upd['advance_locked_until'] = (datetime.now(timezone.utc) + timedelta(days=ADVANCE_LOCK_DAYS)).isoformat()
             upd['advance_failed_attempts'] = 0
             await db.items.update_one({'id': doc['id'], 'user_id': user_id}, {'$set': upd})
             await log_event(user_id, 'ADVANCE_LOCKED', doc.get('name', doc['id']))
-            raise HTTPException(423, 'Item locked for 3 days after 4 failed attempts.')
+            global_lock_trigger = await maybe_activate_advance_global_lock(user_id)
+            if global_lock_trigger:
+                raise HTTPException(423, f'Item locked for {ADVANCE_LOCK_DAYS} days after {ADVANCE_FAIL_LIMIT} failed attempts. Safety block activated: {global_lock_trigger["locked_items"]} of {global_lock_trigger["total_items"]} Advance Mode items are now locked, so all Advance Mode items are blocked for {ADVANCE_LOCK_DAYS} days.')
+            raise HTTPException(423, f'Item locked for {ADVANCE_LOCK_DAYS} days after {ADVANCE_FAIL_LIMIT} failed attempts.')
         await db.items.update_one({'id': doc['id'], 'user_id': user_id}, {'$set': upd})
-        remaining_attempts = 4 - fails
-        raise HTTPException(401, f'Wrong passphrase. {remaining_attempts} attempt{"s" if remaining_attempts != 1 else ""} remaining before 3-day lockout.')
+        remaining_attempts = ADVANCE_FAIL_LIMIT - fails
+        raise HTTPException(401, f'Wrong passphrase. {remaining_attempts} attempt{"s" if remaining_attempts != 1 else ""} remaining before {ADVANCE_LOCK_DAYS}-day lockout.')
     await db.items.update_one({'id': doc['id'], 'user_id': user_id}, {'$set': {'advance_failed_attempts': 0}, '$unset': {'advance_locked_until': ''}})
 def describe_device(user_agent: str) -> str:
     ua = (user_agent or '').lower()
@@ -500,7 +567,9 @@ async def create_item(data: ItemIn, authorization: str | None = Header(default=N
     doc = {'id':str(uuid.uuid4()),'user_id':user['sub'],'name':data.name,'category':data.category,'secret':fernet.encrypt(data.value.encode()).decode(),'created_at':now,'updated_at':now,'tags':data.tags,'favorite':data.favorite,'notes':data.notes,'custom_fields':[cf.dict() for cf in data.custom_fields]}
     if data.url: doc['url'] = data.url
     if data.totp_secret: doc['totp_enc']=fernet.encrypt(data.totp_secret.encode()).decode()
-    if data.advance_mode: doc['advance_mode']=True
+    if data.advance_mode:
+        doc['advance_mode']=True
+        doc['advance_failed_attempts'] = 0
     if data.advance_mode and data.advance_passphrase: doc['advance_hash']=pwd.hash(data.advance_passphrase)
     await db.items.insert_one(doc); await log_event(user['sub'],'CREATE',data.name); return safe_item(doc)
 
@@ -522,8 +591,17 @@ async def update_item(item_id: str, data: ItemIn, authorization: str | None = He
         raise HTTPException(400, 'Advance Mode requires a passphrase')
     upd={'name':data.name,'category':data.category,'secret':fernet.encrypt(data.value.encode()).decode(),'updated_at':now,'url':data.url or '','advance_mode':data.advance_mode,'tags':data.tags,'favorite':data.favorite,'notes':data.notes,'custom_fields':[cf.dict() for cf in data.custom_fields]}
     if data.totp_secret is not None: upd['totp_enc']=fernet.encrypt(data.totp_secret.encode()).decode() if data.totp_secret else None
-    if data.advance_mode and data.advance_passphrase: upd['advance_hash']=pwd.hash(data.advance_passphrase)
-    elif not data.advance_mode: upd['advance_hash']=None
+    if data.advance_mode and data.advance_passphrase:
+        upd['advance_hash']=pwd.hash(data.advance_passphrase)
+        upd['advance_failed_attempts'] = 0
+        upd['advance_locked_until'] = None
+    elif data.advance_mode and not old_doc.get('advance_mode'):
+        upd['advance_failed_attempts'] = 0
+        upd['advance_locked_until'] = None
+    elif not data.advance_mode:
+        upd['advance_hash']=None
+        upd['advance_failed_attempts'] = 0
+        upd['advance_locked_until'] = None
     # Track password history if value changed
     old_val = fernet.decrypt(old_doc['secret'].encode()).decode()
     if old_val != data.value:
