@@ -1,0 +1,56 @@
+{
+  "summary": "Executed backend + frontend regression for requested TopPass5 features and prior critical fixes using public preview URL. Core product flows passed, with 3 auth playbook security gaps failing.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "/api/auth/login",
+        "issue": "No Set-Cookie header / httpOnly session cookie on login response.",
+        "priority": "HIGH"
+      },
+      {
+        "endpoint": "CORS middleware (/api/* preflight)",
+        "issue": "Credentialed CORS preflight does not return explicit allow-origin/allow-credentials as required by auth playbook.",
+        "priority": "HIGH"
+      },
+      {
+        "endpoint": "/api/auth/login",
+        "issue": "No brute-force account lockout after 5 failed attempts; correct password still succeeds immediately after 5 failures.",
+        "priority": "CRITICAL"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration11_regression.py",
+    "/app/test_reports/pytest/iteration11_backend_results.xml"
+  ],
+  "action_items": [
+    "Implement secure cookie-based session support (httpOnly, secure, sameSite) for login path if required by auth policy.",
+    "Set explicit CORS origins (not wildcard) and ensure credential headers are returned for allowed origins.",
+    "Add account lockout/rate-limit behavior after 5 failed login attempts (or align playbook + implementation and update docs/tests).",
+    "Update seed_admin startup logic to refresh existing admin password when ADMIN_PASS changes (code-review finding)."
+  ],
+  "critical_code_review_comments": [
+    "backend/server.py uses allow_credentials=True with CORS_ORIGINS default '*', which is unsafe/invalid for credentialed auth flows.",
+    "seed_admin() updates birthday/L3 fields for existing admin but does not update stored admin password hash if ADMIN_PASS changes.",
+    "Advance Mode bypass protection is implemented correctly: /items/{id}/value returns 403 for advance_mode items and passphrase endpoint is enforced.",
+    "Layer 3 one-time view policy is correctly enforced with export bypass via ?for_export=true."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration11_regression.py"
+  ],
+  "success_rate": {
+    "backend": "80% (12/15)",
+    "frontend": "100% for requested UI/integration flows tested"
+  },
+  "seed_data_creation": "Created multiple TEST_it11_* users/items during backend regression and UI flow tests.",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Validated: loading screen -> landing/auth works, wrong password error readable, plus toggle works, admin birthday prompt works, settings theme + auto-lock options + login history load works, value field strength meter weak->strong works, Smart Fill button appears for URL non-advance items, share countdown updates live, advance reveal prompt enforced in UI. Backend confirms Advance Mode API bypass blocked and L3 one-time-view policy intact. Outstanding failures are auth security playbook items (cookie, CORS credential config, brute-force lockout).",
+  "rca of the issue": "RCA: (1) /api/auth/login returns JWT in JSON body only; no cookie is set, causing missing httpOnly cookie requirement. (2) CORS config in server.py sets allow_credentials=True with wildcard origins (via CORS_ORIGINS='*'), resulting in missing/invalid credentialed preflight headers. (3) Login failure tracking exists but lockout is only enforced under hardcore mode logic; standard 5-fail lockout policy is not implemented, so valid login still succeeds after five bad attempts."
+}

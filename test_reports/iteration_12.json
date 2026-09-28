@@ -1,0 +1,44 @@
+{
+  "summary": "Executed backend + frontend validation for Advance Mode protections, conditional Crypto Type Pass flow, Hardcore deletion behavior, and requested Settings/UI regressions on the live preview URL.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "CORS middleware (/api/auth/login preflight)",
+        "issue": "Credentialed CORS policy is still wildcard-based (`Access-Control-Allow-Origin: *`) and does not return `access-control-allow-credentials: true` in preflight response for tested origin.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration12_advance_hardcore_auth.py",
+    "/app/test_reports/pytest/iteration12_backend_results.xml"
+  ],
+  "action_items": [
+    "Set explicit allowed origins in backend CORS config and return credential headers for allowed origins; avoid wildcard with credentialed auth policy.",
+    "Re-run backend preflight test after CORS config update and confirm browser cookie-based auth compatibility policies."
+  ],
+  "critical_code_review_comments": [
+    "`backend/server.py` CORS branch for wildcard origins (`'*'`) conflicts with credentialed auth expectations and is the root cause of the failing preflight check.",
+    "Advance Mode backend protections are correctly enforced for reveal/update/delete/TOTP/share/bulk-delete in current implementation.",
+    "Seed admin logic now includes updating password hash when ADMIN_PASS changes (startup path looks correct in code review)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration12_advance_hardcore_auth.py",
+    "/app/test_reports/iteration_12.json"
+  ],
+  "success_rate": {
+    "backend": "86% (6/7)",
+    "frontend": "100% for requested flows tested"
+  },
+  "seed_data_creation": "Created multiple TEST_it12_* users/items via backend API and UI flows.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Validated on preview URL: conditional birthday->complete when L3 disabled, birthday->layer3 quiz when enabled, one-time L3 view + export bypass, Advance Mode passphrase prompt for reveal/copy/edit/delete/TOTP in UI, non-Advance actions remain prompt-free, settings has no l3-view-btn and keeps l3-export-btn, mobile settings access works. Only remaining backend failure is credentialed CORS preflight policy.",
+  "rca of the issue": "Reproduction: OPTIONS /api/auth/login with Origin + Access-Control-Request-* headers returns 204 with `Access-Control-Allow-Origin: *` and no `access-control-allow-credentials`. This fails credentialed CORS policy checks. Likely cause is wildcard CORS mode active in runtime env (`CORS_ORIGINS` effectively wildcard), which bypasses explicit-origin credential response behavior. Mitigation: configure explicit origins list (preview/prod URLs) and ensure middleware returns both `access-control-allow-origin` (specific origin) and `access-control-allow-credentials: true`."
+}

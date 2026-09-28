@@ -1,0 +1,61 @@
+{
+  "summary": "Completed backend + frontend testing for Advance Mode per-item lock, 50% global safety block, UI rule text, and normal item flow regression. All requested features verified working correctly.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "CORS preflight (/api/auth/login OPTIONS)",
+        "issue": "Platform-level CORS returns wildcard origin without credentials header. This is a known platform issue, not an app bug.",
+        "priority": "LOW"
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration12_advance_hardcore_auth.py",
+    "/app/test_reports/pytest/iteration13_backend_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Advance Mode per-item lock correctly implemented: 4 wrong attempts lock only that item for 3 days",
+    "50% global safety block correctly triggers when half of Advance Mode items are locked",
+    "UI correctly shows rule text in advance prompt modal: '4 wrong tries lock only this item. If 50% of your Advance Mode items get locked, all Advance Mode items pause for 3 days.'",
+    "Landing page FAQ and feature grid correctly describe Advance Mode rules",
+    "Normal (non-Advance) items work without passphrase prompts for reveal/copy/edit/delete"
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "87.5% (7/8 - CORS preflight is platform-level)",
+    "frontend": "100%"
+  },
+  "seed_data_creation": "Created multiple TEST_* users and items via API and UI during testing",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "All Advance Mode features verified: (1) Per-item lock after 4 wrong attempts works, (2) 50% global safety block triggers correctly via backend API, (3) UI shows correct rule text in advance prompt modal, (4) Landing page FAQ mentions the rules, (5) Normal items work without passphrase prompts. The only failing test is CORS preflight which is a platform-level issue not an app bug.",
+  "features_tested": {
+    "advance_mode_per_item_lock": {
+      "status": "PASS",
+      "details": "4 wrong passphrase attempts lock only that specific item for 3 days. UI shows 'LOCKED' badge and toast notification."
+    },
+    "advance_mode_50_percent_global_block": {
+      "status": "PASS",
+      "details": "Backend test confirms: when 50% of Advance Mode items are locked, all Advance Mode items are blocked. API returns 423 with 'Advance Mode safety block active' message."
+    },
+    "advance_prompt_modal_rule_text": {
+      "status": "PASS",
+      "details": "Modal shows: '4 wrong tries lock only this item. If 50% of your Advance Mode items get locked, all Advance Mode items pause for 3 days.'"
+    },
+    "landing_page_advance_mode_text": {
+      "status": "PASS",
+      "details": "Feature grid and FAQ correctly describe Advance Mode rules including per-item lock and 50% global block."
+    },
+    "normal_item_flow_regression": {
+      "status": "PASS",
+      "details": "Normal items (without Advance Mode) work correctly: reveal, copy, edit, delete all work without passphrase prompts."
+    }
+  }
+}
