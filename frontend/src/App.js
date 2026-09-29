@@ -1,14 +1,16 @@
 import {useEffect, useMemo, useRef, useState} from 'react';
 import axios from 'axios';
-import {ShieldCheck, LockKeyhole, Plus, Search, Eye, EyeOff, Copy, Download, Trash2, LogOut, KeyRound, ArrowUpRight, X, Check, RefreshCw, Pencil, Wand2, Upload, Share2, Activity, ShieldAlert, Gauge, Timer, Lock, HelpCircle, Settings, Calendar, Shield, AlertTriangle, FileText, Skull, Menu, Sun, Moon, History, Monitor, Star, Tag, Hash} from 'lucide-react';
+import {ShieldCheck, LockKeyhole, Plus, Search, Eye, EyeOff, Copy, Download, Trash2, LogOut, KeyRound, ArrowUpRight, X, Check, RefreshCw, Pencil, Wand2, Upload, Share2, Activity, ShieldAlert, Gauge, Timer, Lock, HelpCircle, Settings, Calendar, Shield, AlertTriangle, FileText, Skull, Menu, Sun, Moon, History, Monitor, Star, Tag, Hash, Command, Users, Printer} from 'lucide-react';
 import './App.css';
 import './brand.css';
+import './NewFeatures.css';
 import {Toaster, toast} from 'sonner';
 import AdminPanel from './AdminPanel';
 import LandingPage from './LandingPage';
 import LoadingScreen from './LoadingScreen';
 import VaultItems from './VaultItems';
 import SettingsPanel from './SettingsPanel';
+import {CommandPalette, CSVImportModal, RecoverySheet, EmergencyAccessModal, EmergencyPortal} from './NewFeatures';
 
 const API=`${process.env.REACT_APP_BACKEND_URL}/api`;
 const client=axios.create({baseURL:API});
@@ -190,6 +192,14 @@ function Vault({user,onLogout}){
   // L3 password prompt for viewing when locked
   const [l3ViewPwd,setL3ViewPwd]=useState('');
   const [showL3PwdPrompt,setShowL3PwdPrompt]=useState(false);
+  // New features (Cmd+K, CSV import, Recovery Sheet, Emergency Access)
+  const [showCmdK,setShowCmdK]=useState(false);
+  const [showCSVImport,setShowCSVImport]=useState(false);
+  const [showRecoverySheet,setShowRecoverySheet]=useState(false);
+  const [recoverySheetPwd,setRecoverySheetPwd]=useState('');
+  const [showRecoveryPwdPrompt,setShowRecoveryPwdPrompt]=useState(false);
+  const [recoverySheetData,setRecoverySheetData]=useState(null);
+  const [showEmergency,setShowEmergency]=useState(false);
   const strength=strengthOf(form.value||'');
 
   useEffect(()=>{document.documentElement.setAttribute('data-theme',settings.theme||localStorage.getItem('tp5_theme')||'dark')},[settings.theme]);
@@ -228,6 +238,18 @@ function Vault({user,onLogout}){
       }catch(e){toast.error(e.response?.data?.detail||'Bulk action failed')}
     };
     return()=>{delete window.__showTerms;delete window.__showPrivacy;delete window.__bulkAction};
+  },[]);
+
+  // Cmd+K / Ctrl+K global shortcut for command palette
+  useEffect(()=>{
+    const onKey=(e)=>{
+      if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){
+        e.preventDefault();
+        setShowCmdK(v=>!v);
+      }
+    };
+    window.addEventListener('keydown',onKey);
+    return()=>window.removeEventListener('keydown',onKey);
   },[]);
 
   const load=()=>{
@@ -358,6 +380,29 @@ function Vault({user,onLogout}){
 
   const importVault=async(e)=>{const file=e.target.files[0];if(!file)return;try{const raw=JSON.parse(await file.text());const arr=Array.isArray(raw)?raw:[raw];const valid=arr.filter(x=>x.name&&x.value).map(x=>({name:x.name,value:x.value,category:x.category||'Secret'}));if(!valid.length){toast.error('No valid items found in file');e.target.value='';return}await client.post('/items/import',{items:valid},authHeader());toast.success(`${valid.length} item(s) imported`);load()}catch{toast.error('Import failed — check file format')}finally{e.target.value=''}};
 
+  const importCsvItems=async(items)=>{
+    if(!items||!items.length){toast.error('No items to import');return}
+    try{
+      await client.post('/items/import',{items},authHeader());
+      toast.success(`${items.length} item(s) imported from CSV`);
+      load();
+    }catch(e){toast.error(e.response?.data?.detail||'CSV import failed')}
+  };
+
+  const openRecoverySheet=()=>{
+    if(!user.has_birthday){toast.error('Set your birthday first from Security Settings');return}
+    setShowRecoveryPwdPrompt(true);setRecoverySheetPwd('');
+  };
+  const submitRecoveryPwd=async()=>{
+    if(!recoverySheetPwd){toast.error('Enter your account password');return}
+    try{
+      const r=await client.get('/auth/layer3-passwords',{...authHeader(),params:{for_export:true,password:recoverySheetPwd}});
+      setRecoverySheetData({passwords:r.data.passwords,generatedAt:new Date().toISOString()});
+      setShowRecoveryPwdPrompt(false);setRecoverySheetPwd('');
+      setShowRecoverySheet(true);
+    }catch(e){toast.error(e.response?.data?.detail||'Wrong password')}
+  };
+
   const shareItem=async(item,hours)=>{try{const r=await client.post(`/items/${item.id}/share`,{hours},authHeader());const link=`${window.location.origin}/?share=${r.data.token}`;setShowSharePicker(null);setShareModal({item,link,hours:r.data.hours});toast.success('Share link ready!')}catch(e){toast.error(e.response?.data?.detail||'Share failed')}};
   const loadAudit=async()=>{try{const r=await client.get('/audit',authHeader());setAuditLogs(r.data);setShowAudit(true)}catch{toast.error('Could not load activity')}};
 
@@ -485,7 +530,7 @@ function Vault({user,onLogout}){
     </aside>
 
     <main className="vault-main">
-      <header className="topbar"><div><p className="eyebrow">PERSONAL VAULT / TODAY</p><h1>Good to see you, {user.name?.split(' ')[0]}</h1></div><div className="top-actions"><label className="secondary top-btn" data-testid="import-button" title="Import from backup JSON"><Upload size={16}/> Import<input type="file" accept=".json" style={{display:'none'}} onChange={importVault}/></label><button className="secondary top-btn" data-testid="export-all-button" onClick={exportAll}><Download size={16}/> Export</button><button className="secondary top-btn" data-testid="generator-button" onClick={()=>{setGenPwd(mkPwd(genOpts));setShowGen(true)}}><Wand2 size={16}/> Generator</button><button className="primary" data-testid="add-item-button" onClick={()=>{setEditing(null);setForm({name:'',value:mkPwd(genOpts),category:'Secret',totp_secret:'',url:'',advance_mode:false,advance_passphrase:'',tags:[],favorite:false,notes:'',custom_fields:[]});setShowForm(true)}}><Plus size={17}/> Add value</button></div></header>
+      <header className="topbar"><div><p className="eyebrow">PERSONAL VAULT / TODAY</p><h1>Good to see you, {user.name?.split(' ')[0]}</h1></div><div className="top-actions"><button className="cmdk-trigger" data-testid="cmdk-trigger" onClick={()=>setShowCmdK(true)} title="Command palette (Ctrl+K)"><Command size={13}/> Quick actions <span className="cmdk-kbd">⌘K</span></button><label className="secondary top-btn" data-testid="import-button" title="Import from backup JSON"><Upload size={16}/> Import<input type="file" accept=".json" style={{display:'none'}} onChange={importVault}/></label><button className="secondary top-btn" data-testid="csv-import-button" onClick={()=>setShowCSVImport(true)} title="Import from Chrome/Firefox/LastPass CSV"><FileText size={16}/> CSV</button><button className="secondary top-btn" data-testid="export-all-button" onClick={exportAll}><Download size={16}/> Export</button><button className="secondary top-btn" data-testid="generator-button" onClick={()=>{setGenPwd(mkPwd(genOpts));setShowGen(true)}}><Wand2 size={16}/> Generator</button><button className="primary" data-testid="add-item-button" onClick={()=>{setEditing(null);setForm({name:'',value:mkPwd(genOpts),category:'Secret',totp_secret:'',url:'',advance_mode:false,advance_passphrase:'',tags:[],favorite:false,notes:'',custom_fields:[]});setShowForm(true)}}><Plus size={17}/> Add value</button></div></header>
       <section className="metrics"><div><span>Protected values</span><strong data-testid="protected-count">{items.length.toString().padStart(2,'0')}</strong></div><div><span>Security health</span><strong className="green">Excellent <Check size={17}/></strong></div><div><span>Duplicates</span><strong className={duplicateIds.length>0?'dup-warn':'green'} data-testid="dup-metric">{duplicateIds.length>0?duplicateIds.length:'0'} {duplicateIds.length===0&&<Check size={17}/>}</strong></div></section>
       {hasAdvanceGlobalLock&&<div className="login-attempts-warn" data-testid="advance-global-lock-banner"><AlertTriangle size={14}/><div><b>Advance Mode safety block active</b><p>Half of your protected items reached the failure limit, so every Advance Mode item is paused until {new Date(advanceGlobalLockUntil).toLocaleString()}.</p></div></div>}
 
@@ -598,7 +643,55 @@ function Vault({user,onLogout}){
       hasBirthday={hasBirthday} onSetupBirthday={()=>{setShowBirthdaySetup(true);setShowSettings(false)}}
       disclaimerEnabled={disclaimerEnabled} onToggleDisclaimer={toggleDisclaimer}
       loginHistory={loginHistory} onLoadHistory={loadLoginHistory} historyLoaded={historyLoaded}
+      onOpenEmergency={()=>{setShowEmergency(true);setShowSettings(false)}}
+      onOpenRecoverySheet={()=>{openRecoverySheet();setShowSettings(false)}}
     />}
+
+    {/* Command Palette (Cmd+K) */}
+    <CommandPalette
+      open={showCmdK} onClose={()=>setShowCmdK(false)}
+      items={items}
+      actions={[
+        {id:'add', label:'Add new value', icon:<Plus size={14}/>, hint:'⌘N', keywords:['new','create'], run:()=>{setEditing(null);setForm({name:'',value:mkPwd(genOpts),category:'Secret',totp_secret:'',url:'',advance_mode:false,advance_passphrase:'',tags:[],favorite:false,notes:'',custom_fields:[]});setShowForm(true)}},
+        {id:'gen', label:'Password generator', icon:<Wand2 size={14}/>, keywords:['generate','random','passphrase'], run:()=>{setGenPwd(mkPwd(genOpts));setShowGen(true)}},
+        {id:'csv', label:'Import from CSV (Chrome / Firefox / LastPass)', icon:<FileText size={14}/>, keywords:['import','csv','chrome','firefox','lastpass'], run:()=>setShowCSVImport(true)},
+        {id:'export', label:'Export vault backup', icon:<Download size={14}/>, keywords:['backup','download'], run:exportAll},
+        {id:'security', label:'Security report', icon:<Gauge size={14}/>, keywords:['audit','duplicates','strength'], run:loadSecReport},
+        {id:'shares', label:'Manage share links', icon:<Share2 size={14}/>, keywords:['sharing'], run:loadShares},
+        {id:'recovery', label:'Print recovery sheet', icon:<Printer size={14}/>, keywords:['recovery','print','pdf'], run:openRecoverySheet},
+        {id:'emergency', label:'Emergency access contact', icon:<Users size={14}/>, keywords:['trusted','contact','inheritance'], run:()=>setShowEmergency(true)},
+        {id:'settings', label:'Settings', icon:<Settings size={14}/>, keywords:['preferences','theme','pin'], run:()=>setShowSettings(true)},
+        {id:'help', label:'Help & guide', icon:<HelpCircle size={14}/>, run:()=>setShowHelp(true)},
+        {id:'logout', label:'Log out', icon:<LogOut size={14}/>, run:onLogout},
+      ]}
+      onSelectItem={(it)=>{if(isItemLocked(it)){toast.error('Item is locked');return}reveal(it.id)}}
+      onCopyItem={(it)=>{if(isItemLocked(it)){toast.error('Item is locked');return}copy(it.id)}}
+    />
+
+    {/* CSV Import Modal */}
+    <CSVImportModal open={showCSVImport} onClose={()=>setShowCSVImport(false)} onImport={importCsvItems}/>
+
+    {/* Recovery Sheet Password Prompt */}
+    {showRecoveryPwdPrompt&&<div className="modal-backdrop"><div className="modal" data-testid="recovery-pwd-prompt">
+      <button type="button" className="modal-close icon-btn" onClick={()=>{setShowRecoveryPwdPrompt(false);setRecoverySheetPwd('')}}><X/></button>
+      <p className="eyebrow">RECOVERY SHEET</p><h2><Printer size={18}/> Confirm your password</h2>
+      <p className="muted">Enter your account password to reveal your 20 Layer 3 crypto passwords for a printable recovery sheet.</p>
+      <label>Account Password<input data-testid="recovery-pwd-input" type="password" value={recoverySheetPwd} onChange={e=>setRecoverySheetPwd(e.target.value)} onKeyDown={e=>e.key==='Enter'&&submitRecoveryPwd()} placeholder="Your account password"/></label>
+      <button className="primary wide" data-testid="recovery-pwd-submit" onClick={submitRecoveryPwd} disabled={!recoverySheetPwd}><Printer size={15}/> Generate sheet</button>
+    </div></div>}
+
+    {/* Recovery Sheet Printable View */}
+    {showRecoverySheet&&recoverySheetData&&<RecoverySheet
+      open={showRecoverySheet}
+      onClose={()=>{setShowRecoverySheet(false);setRecoverySheetData(null)}}
+      ownerEmail={user.email}
+      passwords={recoverySheetData.passwords}
+      generatedAt={recoverySheetData.generatedAt}
+    />}
+
+    {/* Emergency Access Modal */}
+    <EmergencyAccessModal open={showEmergency} onClose={()=>setShowEmergency(false)} client={client} authHeader={authHeader} toast={toast}/>
+
 
     {/* L3 Password View Prompt (when L3 enabled) */}
     {showL3PwdPrompt&&<div className="modal-backdrop"><div className="modal" data-testid="l3-pwd-prompt-modal">
@@ -771,6 +864,7 @@ export default function App(){
   const resetToken=new URLSearchParams(window.location.search).get('reset');
   if(shareToken)return <ShareView token={shareToken}/>;
   if(resetToken)return <ResetView token={resetToken}/>;
+  if(window.location.hash==='#emergency')return <EmergencyPortal client={client} toast={toast}/>;
   const isAdminRoute=window.location.pathname==='/admin';
   const logout=()=>{localStorage.removeItem('vault_token');setUser(null);setShowLanding(true);setShowAuth(false)};
   if(booting)return <LoadingScreen/>;

@@ -804,6 +804,128 @@ async def reset_password(data: dict):
     await db.recovery.delete_one({'code':token})
     return {'message':'Password reset successfully. Please sign in with your new password.'}
 
+# ============================================================
+# EMERGENCY ACCESS — trusted contact can request read-only vault
+# access after a user-defined waiting period. User can veto
+# during the countdown. Zero external emails; token-based.
+# ============================================================
+class EmergencyContactIn(BaseModel):
+    contact_email: EmailStr
+    contact_name: str = Field(min_length=1, max_length=80)
+    wait_days: int = Field(default=7, ge=1, le=90)
+
+class EmergencyRequestIn(BaseModel):
+    owner_email: EmailStr
+    contact_email: EmailStr
+    reason: str = Field(max_length=500, default='')
+
+@router.get('/emergency/contact')
+async def get_emergency_contact(authorization: str | None = Header(default=None)):
+    user = auth_user(authorization)
+    u = await db.users.find_one({'id': user['sub']}, {'_id': 0, 'emergency_contact': 1})
+    return u.get('emergency_contact') if u else None
+
+@router.post('/emergency/contact')
+async def set_emergency_contact(data: EmergencyContactIn, authorization: str | None = Header(default=None)):
+    user = auth_user(authorization)
+    contact = {
+        'contact_email': data.contact_email.lower(),
+        'contact_name': data.contact_name,
+        'wait_days': data.wait_days,
+        'set_at': datetime.now(timezone.utc).isoformat(),
+    }
+    await db.users.update_one({'id': user['sub']}, {'$set': {'emergency_contact': contact}})
+    await log_event(user['sub'], 'EMERGENCY_CONTACT_SET', data.contact_email)
+    return contact
+
+@router.delete('/emergency/contact')
+async def delete_emergency_contact(authorization: str | None = Header(default=None)):
+    user = auth_user(authorization)
+    await db.users.update_one({'id': user['sub']}, {'$unset': {'emergency_contact': ''}})
+    await db.emergency_requests.delete_many({'user_id': user['sub']})
+    await log_event(user['sub'], 'EMERGENCY_CONTACT_REMOVED', '')
+    return {'ok': True}
+
+@router.post('/emergency/request')
+async def request_emergency_access(data: EmergencyRequestIn):
+    """Trusted contact submits this to start the countdown."""
+    owner_email = data.owner_email.lower()
+    contact_email = data.contact_email.lower()
+    owner = await db.users.find_one({'email': owner_email}, {'_id': 0})
+    if not owner:
+        return {'ok': True, 'message': 'If a matching vault exists, the request has been submitted.'}
+    ec = owner.get('emergency_contact')
+    if not ec or ec.get('contact_email') != contact_email:
+        return {'ok': True, 'message': 'If a matching vault exists, the request has been submitted.'}
+    existing = await db.emergency_requests.find_one({'user_id': owner['id'], 'status': 'pending'})
+    if existing:
+        raise HTTPException(409, 'A request is already pending on this vault.')
+    wait_days = int(ec.get('wait_days', 7))
+    token = secrets.token_urlsafe(24)
+    unlocks_at = (datetime.now(timezone.utc) + timedelta(days=wait_days)).isoformat()
+    await db.emergency_requests.insert_one({
+        'id': str(uuid.uuid4()),
+        'user_id': owner['id'],
+        'owner_email': owner_email,
+        'contact_email': contact_email,
+        'reason': data.reason,
+        'token': token,
+        'status': 'pending',
+        'created_at': datetime.now(timezone.utc).isoformat(),
+        'unlocks_at': unlocks_at,
+    })
+    await log_event(owner['id'], 'EMERGENCY_REQUESTED', contact_email)
+    return {'ok': True, 'unlocks_at': unlocks_at, 'wait_days': wait_days, 'access_token': token,
+            'message': f'Countdown started. Access will be granted in {wait_days} days unless the vault owner cancels.'}
+
+@router.get('/emergency/requests')
+async def list_emergency_requests(authorization: str | None = Header(default=None)):
+    user = auth_user(authorization)
+    docs = await db.emergency_requests.find({'user_id': user['sub']}, {'_id': 0, 'token': 0}).sort('created_at', -1).to_list(50)
+    return docs
+
+@router.post('/emergency/cancel/{req_id}')
+async def cancel_emergency_request(req_id: str, authorization: str | None = Header(default=None)):
+    user = auth_user(authorization)
+    result = await db.emergency_requests.update_one(
+        {'id': req_id, 'user_id': user['sub'], 'status': 'pending'},
+        {'$set': {'status': 'cancelled', 'cancelled_at': datetime.now(timezone.utc).isoformat()}}
+    )
+    if not result.modified_count:
+        raise HTTPException(404, 'Request not found or already resolved.')
+    await log_event(user['sub'], 'EMERGENCY_CANCELLED', req_id)
+    return {'ok': True}
+
+@router.get('/emergency/export/{token}')
+async def emergency_export(token: str):
+    """Contact uses the access token AFTER the countdown expires to fetch a read-only export."""
+    req = await db.emergency_requests.find_one({'token': token}, {'_id': 0})
+    if not req:
+        raise HTTPException(404, 'Invalid access token.')
+    if req.get('status') != 'pending':
+        raise HTTPException(403, f"Request was {req.get('status')}. Access denied.")
+    if datetime.fromisoformat(req['unlocks_at']) > datetime.now(timezone.utc):
+        remaining = datetime.fromisoformat(req['unlocks_at']) - datetime.now(timezone.utc)
+        raise HTTPException(403, f'Countdown still active. {remaining.days} days remaining.')
+    items = await db.items.find({'user_id': req['user_id'], 'advance_mode': {'$ne': True}}, {'_id': 0}).to_list(1000)
+    export_items = []
+    for it in items:
+        try:
+            export_items.append({
+                'name': it['name'], 'category': it.get('category', 'Secret'),
+                'value': fernet.decrypt(it['secret'].encode()).decode(),
+                'url': it.get('url', ''), 'notes': it.get('notes', ''),
+                'tags': it.get('tags', []),
+            })
+        except Exception:
+            pass
+    await db.emergency_requests.update_one({'token': token}, {'$set': {'status': 'executed', 'executed_at': datetime.now(timezone.utc).isoformat()}})
+    await log_event(req['user_id'], 'EMERGENCY_EXECUTED', req.get('contact_email', ''))
+    return {'owner_email': req['owner_email'], 'contact_email': req['contact_email'], 'items': export_items,
+            'note': 'Advance Mode items are excluded from emergency access by design.'}
+
+
+
 cors_origins=[o.strip() for o in os.environ['CORS_ORIGINS'].split(',') if o.strip()]
 cors_kwargs={'allow_credentials':True,'allow_methods':['*'],'allow_headers':['*']}
 if '*' in cors_origins:

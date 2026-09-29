@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Moon, Sun, History, Monitor, Calendar, Check, ArrowUpRight, Download, RefreshCw, Skull, FileText, LogOut, X, AlertTriangle } from 'lucide-react';
+import { Moon, Sun, History, Monitor, Calendar, Check, ArrowUpRight, Download, RefreshCw, Skull, FileText, LogOut, X, AlertTriangle, Users, Printer } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function SettingsPanel({
@@ -9,6 +9,7 @@ export default function SettingsPanel({
   onOpenHardcore, hasBirthday, onSetupBirthday,
   disclaimerEnabled, onToggleDisclaimer,
   loginHistory, onLoadHistory, historyLoaded,
+  onOpenEmergency, onOpenRecoverySheet,
 }) {
   const [setupPinMode, setSetupPinMode] = useState(false);
   const [setupPinValue, setSetupPinValue] = useState('');
@@ -115,6 +116,21 @@ export default function SettingsPanel({
             <div className="settings-info"><b>Regenerate Passwords</b><p>Get new random passwords. Max 3 changes per month. Requires password.</p></div>
             <RefreshCw size={16} style={{ color: 'var(--muted)', flexShrink: 0 }} />
           </div>
+          {onOpenRecoverySheet && (
+            <div className="settings-row clickable" data-testid="recovery-sheet-btn" onClick={onOpenRecoverySheet}>
+              <div className="settings-info"><b>Print Recovery Sheet</b><p>Generate a printable page with all 20 Layer 3 passwords for safe physical storage.</p></div>
+              <Printer size={16} style={{ color: 'var(--blue)', flexShrink: 0 }} />
+            </div>
+          )}
+
+          {/* Emergency Access */}
+          {onOpenEmergency && (<>
+            <div className="settings-divider"><span>EMERGENCY ACCESS</span></div>
+            <div className="settings-row clickable" data-testid="emergency-access-btn" onClick={onOpenEmergency}>
+              <div className="settings-info"><b><Users size={14} style={{display:'inline',verticalAlign:'middle',marginRight:'6px'}}/>Trusted contact</b><p>Nominate one person who can request read-only vault access after a waiting period.</p></div>
+              <ArrowUpRight size={16} style={{ color: 'var(--blue)', flexShrink: 0 }} />
+            </div>
+          </>)}
 
           {/* Security */}
           <div className="settings-divider"><span>SECURITY</span></div>
