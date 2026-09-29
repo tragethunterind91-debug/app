@@ -32,14 +32,18 @@ export default function LoadingScreen({duration=14000}){
     <div className="tp5-load" data-testid="loading-screen">
       <div className="tp5-load-grid"/>
       <div className="tp5-load-beam"/>
+      <div className="tp5-load-corners"/>
+      <div className="tp5-load-corners-tr"/>
+      <div className="tp5-load-corners-bl"/>
       <div className="tp5-load-center">
+        <div className="tp5-load-company" data-testid="loading-company">ZNQ NETWORK · SECURE SYSTEMS</div>
         <motion.div className="tp5-load-shield" animate={{scale:[1,1.08,1],opacity:[1,.85,1]}} transition={{duration:2,repeat:Infinity,ease:'easeInOut'}}>
-          <ShieldCheck size={40}/>
+          <ShieldCheck size={44}/>
           <div className="tp5-load-orbit"><Lock size={13}/></div>
           <div className="tp5-load-orbit o2"><KeyRound size={13}/></div>
           <div className="tp5-load-orbit o3"><Skull size={13}/></div>
         </motion.div>
-        <motion.h1 className="tp5-load-title" initial="hidden" animate="visible" variants={titleContainer}>
+        <motion.h1 className="tp5-load-title" data-testid="loading-app-name" initial="hidden" animate="visible" variants={titleContainer}>
           {title.split('').map((c,i)=><motion.span key={i} variants={letterVariants}>{c}</motion.span>)}
         </motion.h1>
         <div className="tp5-load-status" data-testid="loading-status-message">{MESSAGES[msgIdx]}<span className="tp5-load-cursor"/></div>
@@ -47,7 +51,7 @@ export default function LoadingScreen({duration=14000}){
         <div className="tp5-load-pct" data-testid="loading-percentage">{pct}%</div>
         <div className="tp5-load-features"><span><Lock size={11}/> AES-256</span><span><Shield size={11}/> 3-Layer Auth</span><span><Fingerprint size={11}/> Zero-Knowledge</span></div>
       </div>
-      <div className="tp5-load-footer"><img src="https://img.sanishtech.com/u/7ad9ec964e6da7120bb20b71fd4cbcb3.png" alt="ZNQ NETWORK" className="tp5-load-znq"/><p>by ZNQ NETWORK</p><p className="tp5-load-safety">Safety First • Security Always • Data Protected</p></div>
+      <div className="tp5-load-footer"><img src="https://img.sanishtech.com/u/7ad9ec964e6da7120bb20b71fd4cbcb3.png" alt="ZNQ NETWORK" className="tp5-load-znq"/><p>by ZNQ NETWORK</p><p className="tp5-load-safety">Safety First · Security Always · Data Protected</p></div>
     </div>
   );
 }
