@@ -1,25 +1,37 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Header, Request, Response
+from fastapi import FastAPI, APIRouter, HTTPException, Header, Request, Response, Cookie, Depends
 from fastapi.responses import RedirectResponse
 from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 from dotenv import load_dotenv
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr
 from passlib.context import CryptContext
 from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from jose import jwt, JWTError
 from authlib.integrations.starlette_client import OAuth
 from datetime import datetime, timezone, timedelta
 from math import ceil
 from pathlib import Path
-import os, secrets, uuid, hashlib, string, json, random
+import os, secrets, uuid, hashlib, string, json, random, base64
 
 load_dotenv(Path(__file__).parent / '.env')
 client = AsyncIOMotorClient(os.environ['MONGO_URL'])
 db = client[os.environ['DB_NAME']]
 router = APIRouter(prefix='/api')
+limiter = Limiter(key_func=get_remote_address)
 pwd = CryptContext(schemes=['bcrypt'], deprecated='auto')
-fernet = Fernet(Fernet.generate_key() if not os.environ.get('VAULT_KEY') else __import__('base64').urlsafe_b64encode(os.environ['VAULT_KEY'].encode()[:32].ljust(32, b'0')))
+
+# --- Vault encryption key: fail fast, derive via HKDF-SHA256 ---
+_vault_key_raw = os.environ.get('VAULT_KEY', '')
+if not _vault_key_raw or len(_vault_key_raw) < 32:
+    raise RuntimeError('VAULT_KEY env var is required and must be at least 32 characters. Refusing to start with a weak or auto-generated key (would silently wipe the vault on restart).')
+_derived = HKDF(algorithm=hashes.SHA256(), length=32, salt=b'toppass5-vault-v1', info=b'fernet').derive(_vault_key_raw.encode())
+fernet = Fernet(base64.urlsafe_b64encode(_derived))
 JWT_SECRET = os.environ['SESSION_SECRET']
 _WORDS = "able also area army back ball band bank base bath bear beat bell best bird bite blue boat body bold bolt bond bone book boot born boss both bowl calm camp card care cart cast cave cell chat chip chop clay clip coal coat code coil cold come cord core corn cost cozy crab crop cure cute dark dawn dear deck deed deep deny desk dice disk dock dome door dove dusk each ease east edge epic even exam face fact fail fall fame farm fast feel fell felt fern firm fish fist flex flip flow foam fold folk fond font foot ford form fort fuel full fund fuse gale game gate gear glow glue goal gold golf grab gulf gust half hall hand hard haze head heat heel helm help hero high hill hint hold hole home hood hook hope horn hour husk icon idea inch iris iron isle jade jest join joke jolt jump just keen keep kick kind king knob lace lamp land lane last late leaf lean lend life lift like lime line link lion list loom loop lore loss loud love luck make mall mane mark mask mass meat meet mesh milk mine mint mode moon more most much mule muse nail name navy neck need nest news nice node none norm nose note null oath obey once only open oval oven over page pair palm part past path pave peak peel pick pier pine ping pipe plan play plot plow plum pole pond pool port pose prep prey pull pump pure push rack rain rank read real reed reef rely rent rest rice rich ride ring risk road role roll roof rope rose rule rush safe sage sail same sand silk sing sink site size skin slam slim snap snow soil sole song sort soul span spin star stay stem step stir stop suit surf swap tale tall tank tape task tear text tick tide time tilt toad toll tomb tool torn town tree trim true tube tuck tusk unit user vast veil view vine volt walk wall wave west wide wild wind wise wish wolf wood word work wrap yell zero zone zoom".split()
 def gen_phrase(): return ' '.join(secrets.SystemRandom().sample(_WORDS, 12))
@@ -81,6 +93,7 @@ class HardcoreSettings(BaseModel):
     max_login_fails: int = Field(default=16, ge=4, le=100)
     max_daily_tries: int = Field(default=4, ge=1, le=20)
     max_layer3_fails: int = Field(default=8, ge=1, le=50)
+    password: str = Field(min_length=1, max_length=200)
 class LoginHistoryEvent(BaseModel):
     id: str
     ts: str
@@ -91,11 +104,19 @@ def token_for(user, stage='full'):
     is_admin = user.get('email','') == os.environ.get('ADMIN_EMAIL','__none__')
     return jwt.encode({'sub': user['id'], 'email': user['email'], 'name': user.get('name',''), 'is_admin': is_admin, 'stage': stage, 'exp': datetime.now(timezone.utc) + timedelta(hours=12)}, JWT_SECRET, algorithm='HS256')
 def set_auth_cookie(response: Response, token: str):
-    response.set_cookie(key='access_token', value=token, httponly=True, secure=True, samesite='none', max_age=12*60*60, path='/')
-def auth_user(authorization, require_full=True):
-    if not authorization or not authorization.startswith('Bearer '): raise HTTPException(401, 'Please sign in again')
+    # SameSite=strict + httpOnly + secure. Same-origin SPA; no cross-site cookies.
+    response.set_cookie(key='access_token', value=token, httponly=True, secure=True, samesite='strict', max_age=12*60*60, path='/')
+def clear_auth_cookie(response: Response):
+    response.delete_cookie(key='access_token', path='/')
+def _extract_token(authorization: str | None, cookie_token: str | None) -> str | None:
+    if authorization and authorization.startswith('Bearer '):
+        return authorization[7:]
+    return cookie_token or None
+def auth_user(authorization, require_full=True, cookie_token: str | None = None):
+    token = _extract_token(authorization, cookie_token)
+    if not token: raise HTTPException(401, 'Please sign in again')
     try:
-        claims = jwt.decode(authorization[7:], JWT_SECRET, algorithms=['HS256'])
+        claims = jwt.decode(token, JWT_SECRET, algorithms=['HS256'])
         if require_full and claims.get('stage', 'full') != 'full':
             raise HTTPException(403, 'Complete all authentication steps first')
         return claims
@@ -231,6 +252,7 @@ async def record_login_history(user_id: str, request: Request):
 async def root(): return {'message': 'CryptonVault API'}
 
 @router.post('/auth/register')
+@limiter.limit('10/hour')
 async def register(data: Credentials, request: Request, response: Response):
     if await db.users.find_one({'email': data.email.lower()}): raise HTTPException(409, 'An account already exists')
     if not data.birthday: raise HTTPException(400, 'Birthday is required')
@@ -256,6 +278,7 @@ async def register(data: Credentials, request: Request, response: Response):
     return {'token': token, 'user': public_user(user)}
 
 @router.post('/auth/login')
+@limiter.limit('20/minute')
 async def login(data: Credentials, request: Request, response: Response):
     user = await db.users.find_one({'email': data.email.lower()}, {'_id': 0})
     if not user or not user.get('password'):
@@ -342,6 +365,7 @@ async def _reset_login_fails(user):
     await db.users.update_one({'id': user['id']}, {'$set': {'failed_logins': {'count': 0, 'daily_count': 0, 'last_fail_date': None, 'consecutive_days': 0, 'layer3_fails': user.get('failed_logins', {}).get('layer3_fails', 0)}}})
 
 @router.post('/auth/verify-birthday')
+@limiter.limit('20/minute')
 async def verify_birthday(data: BirthdayVerify, request: Request, response: Response, authorization: str | None = Header(default=None)):
     claims = auth_user(authorization, require_full=False)
     user = await db.users.find_one({'id': claims['sub']}, {'_id': 0})
@@ -368,6 +392,7 @@ async def verify_birthday(data: BirthdayVerify, request: Request, response: Resp
     return {'stage': 'complete', 'token': token, 'user': public_user(user)}
 
 @router.post('/auth/verify-layer3')
+@limiter.limit('20/minute')
 async def verify_layer3(data: L3QuizAnswer, request: Request, response: Response, authorization: str | None = Header(default=None)):
     claims = auth_user(authorization, require_full=False)
     user = await db.users.find_one({'id': claims['sub']}, {'_id': 0})
@@ -424,25 +449,11 @@ async def set_birthday(data: BirthdayVerify, authorization: str | None = Header(
     return {'ok': True}
 
 @router.get('/auth/login-status')
-async def get_login_status(email: str):
-    """Public endpoint: returns fail status for displaying attempts info on login screen."""
-    user = await db.users.find_one({'email': email.lower()}, {'_id': 0})
-    if not user: return {'hardcore': False, 'layer3_enabled': False}
-    if not user.get('hardcore_enabled'): return {'hardcore': False, 'layer3_enabled': user.get('layer3_enabled', False)}
-    fl = user.get('failed_logins', {})
-    hs = user.get('hardcore_settings', {})
-    today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
-    daily_used = fl.get('daily_count', 0) if fl.get('last_fail_date') == today else 0
-    return {
-        'hardcore': True,
-        'layer3_enabled': user.get('layer3_enabled', False),
-        'daily_used': daily_used,
-        'daily_limit': hs.get('max_daily_tries', 4),
-        'total_fails': fl.get('count', 0),
-        'total_limit': hs.get('max_login_fails', 16),
-        'consecutive_days': fl.get('consecutive_days', 0),
-        'days_limit': hs.get('max_login_fail_days', 4),
-    }
+@limiter.limit('30/minute')
+async def get_login_status(request: Request, email: str = ''):
+    """Public endpoint. Returns a constant, non-identifying shape to prevent user enumeration.
+    Per-user hardcore/layer3 details are only exposed to authenticated users via /auth/me."""
+    return {'hardcore': False, 'layer3_enabled': False}
 
 @router.get('/auth/layer3-passwords')
 async def get_layer3_passwords(authorization: str | None = Header(default=None), for_export: bool = False, password: str | None = None):
@@ -459,9 +470,7 @@ async def get_layer3_passwords(authorization: str | None = Header(default=None),
             'layer3_change_week_start': datetime.now(timezone.utc).isoformat(),
         }})
         user = await db.users.find_one({'id': claims['sub']}, {'_id': 0})
-    if not for_export and user.get('l3_viewed'):
-        raise HTTPException(403, 'Crypto Type Pass can only be viewed once. Use Export Crypto Pass for your offline copy.')
-    # If L3 is enabled, require account password to view (not for export)
+    # No one-shot view lock. Account password is required to view when L3 is enabled.
     if user.get('layer3_enabled') and not for_export:
         if not password:
             raise HTTPException(403, 'PASSWORD_REQUIRED')
@@ -542,7 +551,9 @@ async def update_hardcore_settings(data: HardcoreSettings, authorization: str | 
     claims = auth_user(authorization)
     user = await db.users.find_one({'id': claims['sub']}, {'_id': 0})
     if not user: raise HTTPException(404, 'User not found')
-    # Verify password for safety
+    # Require current password to change Hardcore Mode — it can irreversibly delete the vault.
+    if not pwd.verify(data.password, user.get('password', '')):
+        raise HTTPException(401, 'Wrong account password')
     await db.users.update_one({'id': claims['sub']}, {'$set': {
         'hardcore_enabled': data.enabled,
         'hardcore_settings': {'max_login_fail_days': data.max_login_fail_days, 'max_login_fails': data.max_login_fails, 'max_daily_tries': data.max_daily_tries, 'max_layer3_fails': data.max_layer3_fails}
@@ -554,6 +565,11 @@ async def update_hardcore_settings(data: HardcoreSettings, authorization: str | 
 async def me(authorization: str | None = Header(default=None)):
     claims = auth_user(authorization); user = await db.users.find_one({'id': claims['sub']}, {'_id': 0}); return public_user(user)
 
+@router.post('/auth/logout')
+async def logout(response: Response):
+    clear_auth_cookie(response)
+    return {'ok': True}
+
 @router.get('/items')
 async def items(authorization: str | None = Header(default=None)):
     user = auth_user(authorization); docs = await db.items.find({'user_id': user['sub']}, {'_id':0}).sort('updated_at', -1).to_list(500)
@@ -564,7 +580,8 @@ async def create_item(data: ItemIn, authorization: str | None = Header(default=N
     user = auth_user(authorization); now = datetime.now(timezone.utc).isoformat()
     if data.advance_mode and not data.advance_passphrase:
         raise HTTPException(400, 'Advance Mode requires a passphrase')
-    doc = {'id':str(uuid.uuid4()),'user_id':user['sub'],'name':data.name,'category':data.category,'secret':fernet.encrypt(data.value.encode()).decode(),'created_at':now,'updated_at':now,'tags':data.tags,'favorite':data.favorite,'notes':data.notes,'custom_fields':[cf.dict() for cf in data.custom_fields]}
+    fp = hashlib.sha256(data.value.encode()).hexdigest()
+    doc = {'id':str(uuid.uuid4()),'user_id':user['sub'],'name':data.name,'category':data.category,'secret':fernet.encrypt(data.value.encode()).decode(),'value_fingerprint':fp,'value_length':len(data.value),'created_at':now,'updated_at':now,'tags':data.tags,'favorite':data.favorite,'notes':data.notes,'custom_fields':[cf.dict() for cf in data.custom_fields]}
     if data.url: doc['url'] = data.url
     if data.totp_secret: doc['totp_enc']=fernet.encrypt(data.totp_secret.encode()).decode()
     if data.advance_mode:
@@ -589,7 +606,7 @@ async def update_item(item_id: str, data: ItemIn, authorization: str | None = He
         await verify_advance_access(old_doc, user['sub'], x_advance_passphrase)
     elif data.advance_mode and not data.advance_passphrase:
         raise HTTPException(400, 'Advance Mode requires a passphrase')
-    upd={'name':data.name,'category':data.category,'secret':fernet.encrypt(data.value.encode()).decode(),'updated_at':now,'url':data.url or '','advance_mode':data.advance_mode,'tags':data.tags,'favorite':data.favorite,'notes':data.notes,'custom_fields':[cf.dict() for cf in data.custom_fields]}
+    upd={'name':data.name,'category':data.category,'secret':fernet.encrypt(data.value.encode()).decode(),'value_fingerprint':hashlib.sha256(data.value.encode()).hexdigest(),'value_length':len(data.value),'updated_at':now,'url':data.url or '','advance_mode':data.advance_mode,'tags':data.tags,'favorite':data.favorite,'notes':data.notes,'custom_fields':[cf.dict() for cf in data.custom_fields]}
     if data.totp_secret is not None: upd['totp_enc']=fernet.encrypt(data.totp_secret.encode()).decode() if data.totp_secret else None
     if data.advance_mode and data.advance_passphrase:
         upd['advance_hash']=pwd.hash(data.advance_passphrase)
@@ -621,9 +638,28 @@ async def delete_item(item_id: str, authorization: str | None = Header(default=N
 async def import_items(data: ItemsImportIn, authorization: str | None = Header(default=None)):
     user=auth_user(authorization); now=datetime.now(timezone.utc).isoformat(); created=[]
     for item in data.items:
-        doc={'id':str(uuid.uuid4()),'user_id':user['sub'],'name':item.name,'category':item.category,'secret':fernet.encrypt(item.value.encode()).decode(),'created_at':now,'updated_at':now}
-        await db.items.insert_one(doc); created.append(safe_item(doc))
-    return {'count':len(created),'items':created}
+        if item.advance_mode and not item.advance_passphrase:
+            # Skip malformed advance-mode entries rather than silently storing them unprotected
+            continue
+        fp = hashlib.sha256(item.value.encode()).hexdigest()
+        doc = {
+            'id': str(uuid.uuid4()), 'user_id': user['sub'],
+            'name': item.name, 'category': item.category,
+            'secret': fernet.encrypt(item.value.encode()).decode(),
+            'value_fingerprint': fp, 'value_length': len(item.value),
+            'url': item.url or '', 'tags': item.tags, 'favorite': item.favorite,
+            'notes': item.notes, 'custom_fields': [cf.dict() for cf in item.custom_fields],
+            'created_at': now, 'updated_at': now,
+        }
+        if item.totp_secret:
+            doc['totp_enc'] = fernet.encrypt(item.totp_secret.encode()).decode()
+        if item.advance_mode:
+            doc['advance_mode'] = True
+            doc['advance_hash'] = pwd.hash(item.advance_passphrase)
+            doc['advance_failed_attempts'] = 0
+        await db.items.insert_one(doc)
+        created.append(safe_item(doc))
+    return {'count': len(created), 'items': created}
 
 @router.get('/items/{item_id}/totp')
 async def get_totp(item_id: str, authorization: str | None = Header(default=None), x_advance_passphrase: str | None = Header(default=None)):
@@ -674,30 +710,61 @@ async def get_password_history(item_id: str, authorization: str | None = Header(
     history = await db.password_history.find({'item_id':item_id,'user_id':user['sub']},{'_id':0}).sort('changed_at',-1).to_list(10)
     return [{'id':h['id'],'changed_at':h['changed_at'],'value':fernet.decrypt(h['old_value_enc'].encode()).decode()} for h in history]
 
+async def _ensure_fingerprint(doc):
+    """One-time backfill for legacy items missing value_fingerprint/value_length."""
+    if doc.get('value_fingerprint') and 'value_length' in doc:
+        return doc
+    try:
+        v = fernet.decrypt(doc['secret'].encode()).decode()
+        upd = {'value_fingerprint': hashlib.sha256(v.encode()).hexdigest(), 'value_length': len(v)}
+        await db.items.update_one({'id': doc['id']}, {'$set': upd})
+        doc.update(upd)
+    except Exception:
+        pass
+    return doc
+
 @router.get('/items/duplicates')
 async def get_duplicates(authorization: str | None = Header(default=None)):
-    user=auth_user(authorization); docs=await db.items.find({'user_id':user['sub']},{'_id':0}).to_list(1000)
-    val_map = {}
+    """Duplicate detection via pre-computed fingerprint — no mass-decryption."""
+    user = auth_user(authorization)
+    docs = await db.items.find({'user_id': user['sub']}, {'_id': 0}).to_list(1000)
+    fp_map = {}
     for d in docs:
-        if d.get('advance_mode'): continue
-        val = fernet.decrypt(d['secret'].encode()).decode()
-        val_map.setdefault(val, []).append({'id':d['id'],'name':d['name'],'category':d.get('category','Secret')})
-    dupes = [group for group in val_map.values() if len(group) > 1]
+        if d.get('advance_mode'):
+            continue
+        d = await _ensure_fingerprint(d)
+        fp = d.get('value_fingerprint')
+        if not fp:
+            continue
+        fp_map.setdefault(fp, []).append({'id': d['id'], 'name': d['name'], 'category': d.get('category', 'Secret')})
+    dupes = [group for group in fp_map.values() if len(group) > 1]
     return {'groups': dupes, 'total_duplicates': sum(len(g) for g in dupes)}
 
 @router.get('/security/report')
 async def security_report(authorization: str | None = Header(default=None)):
-    user=auth_user(authorization); docs=await db.items.find({'user_id':user['sub']},{'_id':0}).to_list(1000)
-    if not docs: return {'total':0,'score':100,'weak':[],'reused':[],'old':[]}
-    vals=[fernet.decrypt(d['secret'].encode()).decode() for d in docs]
-    cutoff=(datetime.now(timezone.utc)-timedelta(days=90)).isoformat()
-    weak=[d['name'] for d,v in zip(docs,vals) if len(v)<10]
-    seen={}
-    for d,v in zip(docs,vals): seen.setdefault(v,[]).append(d['name'])
-    reused=[names for names in seen.values() if len(names)>1]
-    old=[d['name'] for d in docs if d.get('updated_at','')< cutoff]
-    score=max(0,100-len(weak)*15-len(reused)*10-len(old)*5)
-    return {'total':len(docs),'score':score,'weak':weak,'reused':reused,'old':old}
+    """Security report via pre-computed fingerprint and value_length — no mass-decryption."""
+    user = auth_user(authorization)
+    docs = await db.items.find({'user_id': user['sub']}, {'_id': 0}).to_list(1000)
+    if not docs:
+        return {'total': 0, 'score': 100, 'weak': [], 'reused': [], 'old': []}
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
+    weak, fp_map, old = [], {}, []
+    total_scanned = 0
+    for d in docs:
+        if d.get('advance_mode'):
+            continue
+        d = await _ensure_fingerprint(d)
+        total_scanned += 1
+        if (d.get('value_length') or 0) < 10:
+            weak.append(d['name'])
+        fp = d.get('value_fingerprint')
+        if fp:
+            fp_map.setdefault(fp, []).append(d['name'])
+        if d.get('updated_at', '') < cutoff:
+            old.append(d['name'])
+    reused = [names for names in fp_map.values() if len(names) > 1]
+    score = max(0, 100 - len(weak) * 15 - len(reused) * 10 - len(old) * 5)
+    return {'total': total_scanned, 'score': score, 'weak': weak, 'reused': reused, 'old': old}
 
 @router.get('/preferences')
 async def get_prefs(authorization: str | None = Header(default=None)):
@@ -785,7 +852,8 @@ async def get_share(share_token: str):
     return {'name':item['name'],'value':fernet.decrypt(item['secret'].encode()).decode(),'expires':doc['expires']}
 
 @router.post('/auth/recovery')
-async def recovery(data: dict):
+@limiter.limit('5/hour')
+async def recovery(data: dict, request: Request):
     email=str(data.get('email','')).lower()
     user=await db.users.find_one({'email':email},{'_id':0})
     if not user: return {'message':'If that email exists, a reset link has been prepared.'}
@@ -795,7 +863,8 @@ async def recovery(data: dict):
     return {'message':'Reset link created.','reset_code':code}
 
 @router.post('/auth/reset-password')
-async def reset_password(data: dict):
+@limiter.limit('10/hour')
+async def reset_password(data: dict, request: Request):
     token=data.get('token',''); new_password=data.get('new_password','')
     if len(new_password)<8: raise HTTPException(400,'Password must be at least 8 characters')
     rec=await db.recovery.find_one({'code':token},{'_id':0})
@@ -847,7 +916,8 @@ async def delete_emergency_contact(authorization: str | None = Header(default=No
     return {'ok': True}
 
 @router.post('/emergency/request')
-async def request_emergency_access(data: EmergencyRequestIn):
+@limiter.limit('5/hour')
+async def request_emergency_access(data: EmergencyRequestIn, request: Request):
     """Trusted contact submits this to start the countdown."""
     owner_email = data.owner_email.lower()
     contact_email = data.contact_email.lower()
@@ -927,13 +997,30 @@ async def emergency_export(token: str):
 
 
 cors_origins=[o.strip() for o in os.environ['CORS_ORIGINS'].split(',') if o.strip()]
-cors_kwargs={'allow_credentials':True,'allow_methods':['*'],'allow_headers':['*']}
 if '*' in cors_origins:
-    cors_kwargs['allow_origins']=[]
-    cors_kwargs['allow_origin_regex']='.*'
+    # Safety: wildcard origins are incompatible with credentialed cookies.
+    cors_kwargs = {'allow_origins': ['*'], 'allow_credentials': False, 'allow_methods': ['*'], 'allow_headers': ['*']}
 else:
-    cors_kwargs['allow_origins']=cors_origins
-app=FastAPI(title='TopPass5 API'); app.include_router(router); app.add_middleware(SessionMiddleware, secret_key=JWT_SECRET, same_site='lax', https_only=True); app.add_middleware(CORSMiddleware, **cors_kwargs)
+    cors_kwargs = {'allow_origins': cors_origins, 'allow_credentials': True, 'allow_methods': ['*'], 'allow_headers': ['*']}
+app=FastAPI(title='TopPass5 API')
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+@app.middleware('http')
+async def promote_cookie_to_authorization(request: Request, call_next):
+    # Lets existing handlers that read Authorization header continue to work
+    # when the client uses the httpOnly access_token cookie instead.
+    if 'authorization' not in {k.lower() for k in request.headers.keys()}:
+        tok = request.cookies.get('access_token')
+        if tok:
+            headers = list(request.scope.get('headers') or [])
+            headers.append((b'authorization', f'Bearer {tok}'.encode()))
+            request.scope['headers'] = headers
+    return await call_next(request)
+
+app.include_router(router)
+app.add_middleware(SessionMiddleware, secret_key=JWT_SECRET, same_site='lax', https_only=True)
+app.add_middleware(CORSMiddleware, **cors_kwargs)
 @app.on_event('startup')
 async def seed_admin():
     admin_email=os.environ.get('ADMIN_EMAIL',''); admin_pass=os.environ.get('ADMIN_PASS',''); admin_birthday=os.environ.get('ADMIN_BIRTHDAY','')

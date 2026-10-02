@@ -13,8 +13,13 @@ import SettingsPanel from './SettingsPanel';
 import {CommandPalette, CSVImportModal, RecoverySheet, EmergencyAccessModal, EmergencyPortal} from './NewFeatures';
 
 const API=`${process.env.REACT_APP_BACKEND_URL}/api`;
-const client=axios.create({baseURL:API});
-const authHeader=(extra={})=>({headers:{Authorization:`Bearer ${localStorage.getItem('vault_token')}`,...extra}});
+const client=axios.create({baseURL:API, withCredentials:true});
+// Backward-compat: still send Authorization header if a token is stashed in localStorage
+// (older sessions). New logins rely on the httpOnly access_token cookie, not localStorage.
+const authHeader=(extra={})=>{
+  const t=localStorage.getItem('vault_token');
+  return {headers:t?{Authorization:`Bearer ${t}`,...extra}:{...extra}};
+};
 const copyText=async(text)=>{try{await navigator.clipboard.writeText(text)}catch{const a=document.createElement('textarea');a.value=text;document.body.appendChild(a);a.select();document.execCommand('copy');a.remove()}};
 const hashPin=async(p)=>{const buf=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(p+'tp5-pin-salt'));return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('')};
 const formatApiError=detail=>{if(!detail)return 'Something went wrong. Please try again.';if(typeof detail==='string')return detail;if(Array.isArray(detail))return detail.map(e=>e?.msg||String(e)).join(' ');return detail?.msg||String(detail)};
@@ -41,7 +46,7 @@ function Auth({onLogin}){
         if(!regBirthday){toast.error('Birthday is required');setBusy(false);return}
         if(regBirthday!==regBirthdayConfirm){toast.error('Birthdays do not match');setBusy(false);return}
         const r=await client.post('/auth/register',{email,password,birthday:regBirthday});
-        localStorage.setItem('vault_token',r.data.token);
+        localStorage.removeItem('vault_token');
         if('credentials' in navigator&&window.PasswordCredential){try{const c=new window.PasswordCredential({id:email,password,name:r.data.user.name});await navigator.credentials.store(c)}catch{}}
         toast.success('Vault created! Your Crypto Type Pass is waiting for you in Settings whenever you want it.');
         onLogin(r.data.user);
@@ -50,7 +55,7 @@ function Auth({onLogin}){
         if(r.data.stage==='birthday'){
           setStageToken(r.data.token);setLoginStage('birthday');setBirthdayInput('');
         }else{
-          localStorage.setItem('vault_token',r.data.token);
+          localStorage.removeItem('vault_token');
           if('credentials' in navigator&&window.PasswordCredential){try{const c=new window.PasswordCredential({id:email,password,name:r.data.user?.name});await navigator.credentials.store(c)}catch{}}
           onLogin(r.data.user);
         }
@@ -65,7 +70,7 @@ function Auth({onLogin}){
       if(r.data.stage==='layer3'){
         setStageToken(r.data.token);setQuizIndices(r.data.quiz_indices);setQuizAnswers({});setLoginStage('layer3');
       }else{
-        localStorage.setItem('vault_token',r.data.token);onLogin(r.data.user);setLoginStage(null);
+        localStorage.removeItem('vault_token');onLogin(r.data.user);setLoginStage(null);
       }
     }catch(e){const msg=formatApiError(e.response?.data?.detail)||'Birthday verification failed';setAuthError(msg);toast.error(msg)}finally{setBusy(false)}
   };
@@ -74,7 +79,7 @@ function Auth({onLogin}){
     setBusy(true);
     try{
       const r=await client.post('/auth/verify-layer3',{answers:quizAnswers},{headers:{Authorization:`Bearer ${stageToken}`}});
-      localStorage.setItem('vault_token',r.data.token);onLogin(r.data.user);setLoginStage(null);
+      localStorage.removeItem('vault_token');onLogin(r.data.user);setLoginStage(null);
     }catch(e){const msg=formatApiError(e.response?.data?.detail)||'Layer 3 verification failed';setAuthError(msg);toast.error(msg)}finally{setBusy(false)}
   };
 
@@ -465,7 +470,9 @@ function Vault({user,onLogout}){
   };
   const loadHardcore=async()=>{try{const r=await client.get('/auth/hardcore-settings',authHeader());setHardcoreData(r.data)}catch{toast.error('Could not load Hardcore settings')}};
   const saveHardcore=async(newData)=>{
-    try{await client.put('/auth/hardcore-settings',newData,authHeader());setHardcoreData(d=>({...d,enabled:newData.enabled,settings:{max_login_fail_days:newData.max_login_fail_days,max_login_fails:newData.max_login_fails,max_daily_tries:newData.max_daily_tries,max_layer3_fails:newData.max_layer3_fails}}));toast.success(newData.enabled?'Hardcore Mode enabled — be careful!':'Hardcore Mode disabled')}catch(e){toast.error(e.response?.data?.detail||'Failed')}
+    const pw=window.prompt('Confirm your account password to change Hardcore Mode settings:');
+    if(!pw){toast.error('Password required');return}
+    try{await client.put('/auth/hardcore-settings',{...newData,password:pw},authHeader());setHardcoreData(d=>({...d,enabled:newData.enabled,settings:{max_login_fail_days:newData.max_login_fail_days,max_login_fails:newData.max_login_fails,max_daily_tries:newData.max_daily_tries,max_layer3_fails:newData.max_layer3_fails}}));toast.success(newData.enabled?'Hardcore Mode enabled — be careful!':'Hardcore Mode disabled')}catch(e){toast.error(e.response?.data?.detail||'Failed')}
   };
   const toggleDisclaimer=async(enable)=>{
     if(enable&&!disclaimerEnabled){setShowDisclaimer(true)}
@@ -855,9 +862,10 @@ export default function App(){
   const [showAuth,setShowAuth]=useState(false);
   useEffect(()=>{
     const minDelay=new Promise(r=>setTimeout(r,14000));
-    const t=new URLSearchParams(window.location.search).get('token');if(t){localStorage.setItem('vault_token',t);window.history.replaceState({},'','/')}
-    const token=localStorage.getItem('vault_token');
-    const authCheck=token?client.get('/auth/me',authHeader()).then(r=>{setUser(r.data);setShowLanding(false);setShowAuth(false)}).catch(()=>localStorage.removeItem('vault_token')):Promise.resolve();
+    // Cookie-based auth: just ask the server who we are.
+    const authCheck=client.get('/auth/me',authHeader())
+      .then(r=>{setUser(r.data);setShowLanding(false);setShowAuth(false)})
+      .catch(()=>{localStorage.removeItem('vault_token')});
     Promise.all([minDelay,authCheck]).finally(()=>setBooting(false));
   },[]);
   const shareToken=new URLSearchParams(window.location.search).get('share');
@@ -866,7 +874,11 @@ export default function App(){
   if(resetToken)return <ResetView token={resetToken}/>;
   if(window.location.hash==='#emergency')return <EmergencyPortal client={client} toast={toast}/>;
   const isAdminRoute=window.location.pathname==='/admin';
-  const logout=()=>{localStorage.removeItem('vault_token');setUser(null);setShowLanding(true);setShowAuth(false)};
+  const logout=()=>{
+    client.post('/auth/logout').catch(()=>{});
+    localStorage.removeItem('vault_token');
+    setUser(null);setShowLanding(true);setShowAuth(false);
+  };
   if(booting)return <LoadingScreen/>;
   if(isAdminRoute&&!user)return <Auth onLogin={(u)=>{setUser(u);setShowLanding(false);setShowAuth(false)}}/>;
   if(isAdminRoute&&user)return <AdminPanel user={user} onLogout={logout}/>;
