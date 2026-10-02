@@ -126,7 +126,7 @@
 .tp5-footer-cols div{display:flex;flex-direction:column;gap:9px}
 .tp5-footer-cols span,.tp5-footer-cols a{font-size:13px;color:#8993a7;text-decoration:none;transition:color .18s}.tp5-footer-cols a:hover{color:#e8ddc0}
 .tp5-footer-bottom{display:flex;align-items:center;gap:10px;max-width:1200px;margin:0 auto;padding-top:22px;border-top:1px solid var(--line);color:#4a5568;font-size:12px}
-.tp5-znq-logo{width:20px;height:20px;border-radius:4px}
+.tp5-znq-logo{height:28px;width:auto;opacity:.9}
 /* Responsive */
 @media(max-width:900px){
   .tp5-hero{flex-direction:column;text-align:center;padding:90px 6vw 70px;min-height:auto}

@@ -2,6 +2,7 @@ import {useEffect, useRef, useState} from 'react';
 import {motion, useInView} from 'framer-motion';
 import {ShieldCheck, Lock, Shield, KeyRound, Skull, EyeOff, ShieldAlert, ArrowUpRight, ArrowRight, Check, X as XIcon, ChevronDown, Sparkles, Zap, Fingerprint, ScrollText, Send, Mail, RadioTower} from 'lucide-react';
 import {Accordion, AccordionItem, AccordionTrigger, AccordionContent} from './components/ui/accordion';
+import ZnqLogo from './ZnqLogo';
 import './LandingPage.css';
 
 const fadeUp={hidden:{opacity:0,y:32},visible:{opacity:1,y:0,transition:{duration:.7,ease:[0.16,1,0.3,1]}}};
@@ -237,7 +238,7 @@ function Footer(){
           <div><h4>Company</h4><span>ZNQ Network</span><a data-testid="footer-telegram-link" href="https://t.me/znqnetworkglob" target="_blank" rel="noreferrer">Telegram</a><a data-testid="footer-email-link" href="mailto:znqnetworkglobsupport@gmail.com">Support Email</a><a data-testid="footer-x-link" href="https://x.com/ZNQNETWORKGLOB" target="_blank" rel="noreferrer">X / Twitter</a></div>
         </div>
       </div>
-      <div className="tp5-footer-bottom"><img src="https://img.sanishtech.com/u/7ad9ec964e6da7120bb20b71fd4cbcb3.png" alt="ZNQ" className="tp5-znq-logo"/><span>by ZNQ NETWORK — Your secrets. Only yours.</span></div>
+      <div className="tp5-footer-bottom"><ZnqLogo height={34} className="tp5-znq-logo" title="ZNQ Network"/><span>by ZNQ NETWORK — Your secrets. Only yours.</span></div>
     </footer>
   );
 }

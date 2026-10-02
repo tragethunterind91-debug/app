@@ -27,7 +27,7 @@
 .tp5-load-features span svg{color:#E5B842}
 @keyframes tp5FadeIn{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
 .tp5-load-footer{position:absolute;bottom:36px;display:flex;flex-direction:column;align-items:center;gap:8px;animation:tp5FadeIn 1s .5s ease-out both}
-.tp5-load-znq{width:64px;opacity:.65;filter:brightness(1.15) sepia(.25) hue-rotate(-15deg) saturate(1.2)}
+.tp5-load-znq{height:42px;width:auto;opacity:.8;filter:brightness(1.1) sepia(.2) hue-rotate(-15deg) saturate(1.1)}
 .tp5-load-footer p{margin:0;font:500 10px 'DM Mono',monospace;letter-spacing:.24em;color:rgba(229,184,66,.55);text-transform:uppercase}
 .tp5-load-safety{letter-spacing:.14em!important;color:rgba(138,148,166,.55)!important;font-size:9px!important}
 .tp5-load-corners{position:absolute;inset:24px;pointer-events:none;z-index:0}

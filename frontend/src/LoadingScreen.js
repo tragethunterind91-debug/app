@@ -1,6 +1,7 @@
 import {useEffect, useState} from 'react';
 import {motion} from 'framer-motion';
 import {ShieldCheck, Lock, Shield, Fingerprint, Skull, KeyRound} from 'lucide-react';
+import ZnqLogo from './ZnqLogo';
 import './LoadingScreen.css';
 
 const MESSAGES=[
@@ -51,7 +52,7 @@ export default function LoadingScreen({duration=14000}){
         <div className="tp5-load-pct" data-testid="loading-percentage">{pct}%</div>
         <div className="tp5-load-features"><span><Lock size={11}/> AES-256</span><span><Shield size={11}/> 3-Layer Auth</span><span><Fingerprint size={11}/> Zero-Knowledge</span></div>
       </div>
-      <div className="tp5-load-footer"><img src="https://img.sanishtech.com/u/7ad9ec964e6da7120bb20b71fd4cbcb3.png" alt="ZNQ NETWORK" className="tp5-load-znq"/><p>by ZNQ NETWORK</p><p className="tp5-load-safety">Safety First · Security Always · Data Protected</p></div>
+      <div className="tp5-load-footer"><ZnqLogo height={38} className="tp5-load-znq" title="ZNQ Network"/><p>by ZNQ NETWORK</p><p className="tp5-load-safety">Safety First · Security Always · Data Protected</p></div>
     </div>
   );
 }
