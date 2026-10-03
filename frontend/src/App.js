@@ -534,7 +534,7 @@ function Vault({user,onLogout,onUserUpdate}){
       <div className="side-label lower">SECURITY</div>
       <div className="nav-item" data-testid="settings-nav" onClick={()=>setShowSettings(true)}><Settings size={17}/>Settings</div>
       <div className="nav-item" data-testid="help-nav" onClick={()=>setShowHelp(true)}><HelpCircle size={17}/>Help &amp; Guide</div>
-      <div className={user.is_vip?"nav-item nav-vip-active":"nav-item nav-vip"} data-testid="vip-nav" onClick={()=>setShowVip(true)}><Crown size={17}/>{user.is_vip?'VIP · Active':'Upgrade to VIP'}</div>
+      <div className={user.is_vip?"nav-item nav-vip-active":"nav-item nav-vip"} data-testid="vip-nav" onClick={()=>setShowVip(true)}><Crown size={17}/>{user.is_vip?'Membership · Active':'Membership'}</div>
       <div className="side-note"><span className="status-dot"/>All systems protected</div>
       <div className="side-bottom"><div className="user-pill"><div className="avatar">{user.name?.[0]?.toUpperCase()}</div><div><b data-testid="user-email">{user.email} {user.is_vip&&<span className="vip-badge" data-testid="user-vip-badge" title="VIP"><Crown size={10}/> VIP</span>}</b><small>Personal vault</small></div></div><button className="icon-btn" data-testid="logout-button" onClick={onLogout} title="Sign out"><LogOut size={17}/></button></div>
     </aside>

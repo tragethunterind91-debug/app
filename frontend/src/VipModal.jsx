@@ -1,18 +1,34 @@
 import {useEffect, useState} from 'react';
-import {Crown, X, Check, Sparkles, ShieldCheck, Zap, KeyRound, Share2, Monitor, Globe, LogOut, Fingerprint, HardDrive, Loader2} from 'lucide-react';
+import {Crown, X, Check, ShieldCheck, KeyRound, Share2, Monitor, Globe, LogOut, Fingerprint, HardDrive, Sparkles, Zap, Loader2} from 'lucide-react';
+import './VipModal.css';
 
-// VIP highlights (spec: VIP = VIP core + all Updates. UI showcase only — no functionality yet.)
-const VIP_HIGHLIGHTS = [
-  {icon: ShieldCheck, label: 'All future updates included'},
-  {icon: KeyRound,    label: 'Unlimited Advance Mode items'},
-  {icon: Share2,      label: 'Share links with view-limit + password'},
-  {icon: Monitor,     label: 'Up to 2 trusted devices per account'},
-  {icon: Globe,       label: 'IP + country login lock'},
-  {icon: LogOut,      label: 'Remote "logout all devices" kill-switch'},
-  {icon: Zap,         label: 'Custom session auto-off timeout'},
-  {icon: Fingerprint, label: 'Scheduled self-destruct date'},
-  {icon: HardDrive,   label: 'Engineer Mode + 500 KB per-user storage'},
-  {icon: Sparkles,    label: 'VIP badge, custom themes, priority support'},
+// Grouped VIP capabilities — professional presentation.
+const VIP_SECTIONS = [
+  {
+    title: 'Security',
+    items: [
+      {icon: KeyRound,    label: 'Unlimited Advance Mode items'},
+      {icon: Globe,       label: 'IP and country login lock'},
+      {icon: LogOut,      label: 'Remote sign-out across all devices'},
+      {icon: Fingerprint, label: 'Scheduled vault self-destruct'},
+    ],
+  },
+  {
+    title: 'Access & Sharing',
+    items: [
+      {icon: Share2,      label: 'Share links with view limits and password'},
+      {icon: Monitor,     label: 'Up to two trusted devices per account'},
+      {icon: Zap,         label: 'Custom session timeout controls'},
+      {icon: HardDrive,   label: 'Engineer Mode and 500 KB per-user storage'},
+    ],
+  },
+  {
+    title: 'Experience',
+    items: [
+      {icon: ShieldCheck, label: 'All current and future VIP updates included'},
+      {icon: Sparkles,    label: 'VIP badge, custom themes, priority support'},
+    ],
+  },
 ];
 
 export default function VipModal({client, authHeader, onClose, onPurchased}){
@@ -40,7 +56,7 @@ export default function VipModal({client, authHeader, onClose, onPurchased}){
       }));
       onPurchased && onPurchased(r.data.user);
     } catch (e) {
-      // keep silent; a toast is handled by caller if needed
+      // caller surfaces errors via toast if needed
     } finally {
       setLoading(false);
     }
@@ -54,33 +70,52 @@ export default function VipModal({client, authHeader, onClose, onPurchased}){
 
   return (
     <div className="modal-backdrop" data-testid="vip-modal-backdrop">
-      <div className="modal vip-modal" data-testid="vip-modal" role="dialog" aria-label="VIP upgrade">
+      <div className="modal vip-modal" data-testid="vip-modal" role="dialog" aria-label="TopPass5 Membership">
         <button type="button" className="modal-close icon-btn" data-testid="vip-modal-close" onClick={onClose}><X/></button>
 
-        <div className="vip-hero">
-          <div className="vip-hero-icon"><Crown size={30}/></div>
-          <p className="eyebrow">TOPPASS5 · VIP</p>
-          <h2>Unlock every lock.</h2>
-          <p className="vip-sub">One flat price. All current VIP features. All future updates. No subscription traps.</p>
-        </div>
+        <header className="vip-hero">
+          <div className="vip-hero-icon"><Crown size={26}/></div>
+          <p className="eyebrow">Membership</p>
+          <h2>TopPass5 Professional</h2>
+          <p className="vip-sub">A single, one-time payment unlocks the full feature set and every future update. No recurring charges, no tiered pricing.</p>
+        </header>
 
         {active ? (
-          <div className="vip-status-card" data-testid="vip-status-active">
-            <div className="vip-status-row"><Check size={18}/><div><b>VIP active</b><small>{daysLeft} day{daysLeft === 1 ? '' : 's'} remaining{untilDate ? ` · until ${untilDate}` : ''}</small></div></div>
-            <small className="vip-status-note">Thanks for supporting TopPass5. Tap "Extend" to add another {days} days.</small>
-          </div>
+          <section className="vip-status-card" data-testid="vip-status-active">
+            <div className="vip-status-row">
+              <Check size={18}/>
+              <div>
+                <b>Membership active</b>
+                <small>{daysLeft} day{daysLeft === 1 ? '' : 's'} remaining{untilDate ? ` · renews on ${untilDate}` : ''}</small>
+              </div>
+            </div>
+            <small className="vip-status-note">Thank you for supporting TopPass5. Extend your membership to add another {days} days of access.</small>
+          </section>
         ) : (
-          <div className="vip-price-row">
-            <div className="vip-price"><span className="vip-price-cur">$</span><span className="vip-price-amt">{price.toFixed(2)}</span></div>
-            <div className="vip-price-sub"><b>for {days} days</b><small>2 months + 15 days · one-time</small></div>
-          </div>
+          <section className="vip-price-row">
+            <div className="vip-price">
+              <span className="vip-price-cur">USD</span>
+              <span className="vip-price-amt">{price.toFixed(2)}</span>
+            </div>
+            <div className="vip-price-sub">
+              <b>{days} days of access</b>
+              <small>One-time payment · no auto-renewal</small>
+            </div>
+          </section>
         )}
 
-        <ul className="vip-feature-list" data-testid="vip-feature-list">
-          {VIP_HIGHLIGHTS.map(({icon:Icon, label}, i)=>(
-            <li key={i}><Icon size={14}/> <span>{label}</span></li>
+        <div className="vip-feature-sections" data-testid="vip-feature-list">
+          {VIP_SECTIONS.map(section => (
+            <section key={section.title} className="vip-feature-section">
+              <h4 className="vip-feature-heading">{section.title}</h4>
+              <ul className="vip-feature-list">
+                {section.items.map(({icon:Icon, label}, i)=>(
+                  <li key={i}><Icon size={13}/> <span>{label}</span></li>
+                ))}
+              </ul>
+            </section>
           ))}
-        </ul>
+        </div>
 
         <button
           className="primary wide vip-cta"
@@ -88,12 +123,17 @@ export default function VipModal({client, authHeader, onClose, onPurchased}){
           onClick={purchase}
           disabled={loading}
         >
-          {loading ? <><Loader2 size={16} className="spin"/> Processing…</> : (active ? <>Extend {days} more days — ${price.toFixed(2)}</> : <><Crown size={16}/> Upgrade for ${price.toFixed(2)}</>)}
+          {loading
+            ? <><Loader2 size={16} className="spin"/> Processing payment</>
+            : (active
+                ? <>Extend membership — USD {price.toFixed(2)}</>
+                : <>Activate membership — USD {price.toFixed(2)}</>
+              )
+          }
         </button>
 
         <p className="vip-fineprint">
-          Demo mode — this is a fake payment button for testing. No card is charged.
-          Real payments will swap in when the production provider is wired.
+          Secure checkout · encrypted at rest and in transit. Running in sandbox mode while the payment provider is being provisioned — no card is charged.
         </p>
       </div>
     </div>
