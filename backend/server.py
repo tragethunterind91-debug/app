@@ -874,6 +874,7 @@ async def vip_purchase(authorization: str | None = Header(default=None)):
     return {'ok': True, 'user': public_user(u), 'purchase': purchase}
 
 
+@router.get('/admin/stats')
 async def admin_stats(authorization: str | None = Header(default=None)):
     user=auth_user(authorization)
     if not user.get('is_admin'): raise HTTPException(403,'Owner access only')

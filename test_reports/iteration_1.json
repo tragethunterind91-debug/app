@@ -1,0 +1,36 @@
+{
+  "summary": "First QA pass on TopPass5 vault. Backend: 19/19 pytest cases passed covering health, auth staged flow (login -> birthday -> complete), admin seed login with admin@example.com + 1990-01-01, items CRUD + reveal + favorite, share link (create/consume/invalid rejection), import, bulk-delete, advance-mode create/reveal/wrong-passphrase/share-blocked/delete-with-x-advance-passphrase, hardcore settings get + validation + wrong-password reject, layer3 passwords (20 entries), security report, preferences, audit, VIP status, encryption roundtrip verified. Frontend: landing/loading screen renders, Get Started -> login form reached, admin login + birthday verify stage succeeds and vault dashboard loads with user email + add-value button + sidebar nav. 3-layer auth staging works end-to-end.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/admin/stats", "issue": "admin_stats() handler is defined (server.py line 877) but has NO @router decorator, so the admin stats endpoint is not exposed over HTTP. Admin panel UI calling GET /api/admin/stats will 404."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Vault dashboard header (desktop 1280px)", "issues": ["Greeting heading 'Good to see you, <name>' wraps vertically and overlaps the action button row ('Quick actions / Import / CSV / Export / Generator / Add value'). At 1280px width the top-actions row visually collides with the h1 — tighten the topbar flex layout or allow actions to wrap to a new row."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/backend_test.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [
+    "Add @router.get('/admin/stats') decorator to admin_stats() in /app/backend/server.py (line 877). Without it, the admin dashboard metrics cards will fail to load.",
+    "Fix topbar layout collision between greeting heading and top-actions row at ~1280px (vault dashboard)."
+  ],
+  "critical_code_review_comments": [
+    "server.py is ~1150 lines in a single file. Consider splitting into routers (auth, items, vip, emergency, admin).",
+    "/api/admin/stats route missing decorator — dead code path.",
+    "CORS_ORIGINS='*' in backend/.env combined with the special-case in server.py disables credentialed cookies for wildcard origin — fine for dev, but production must set an explicit origin.",
+    "pytest.ini forces -n 2 xdist loadscope; tests share a single backend/preview env, so stateful tests (login lockouts, hardcore account deletion) could race across workers if expanded later — document the constraint.",
+    "requests.Session cookie jar leaks across tests (initial test_items_requires_auth returned 200 due to a prior admin login's access_token cookie). Needed a fresh client to assert unauth 401 — flagged and fixed."
+  ],
+  "updated_files": ["/app/backend/tests/backend_test.py"],
+  "success_rate": {"backend": "100% (19/19)", "frontend": "100% smoke (login + 3-layer auth + dashboard)"},
+  "test_credentials": "admin@example.com / AdminPass123! / 1990-01-01 (seeded on startup via backend/.env ADMIN_* vars)",
+  "seed_data_creation": "None persisted intentionally. Tests create TEST_-prefixed items and random test_<uuid>@test.com users; items are cleaned up where feasible.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend test file at /app/backend/tests/backend_test.py uses pytest-xdist (configured in /app/backend/pytest.ini with -n 2 --dist loadscope). BASE_URL falls back to reading /app/frontend/.env if REACT_APP_BACKEND_URL env var isn't exported. Admin flow verified: POST /api/auth/login returns {stage:'birthday', token: <staged>}, then POST /api/auth/verify-birthday with Bearer <staged> + {birthday:'1990-01-01'} returns {stage:'complete', token}. Advance item deletion requires HTTP header 'x-advance-passphrase: <phrase>' (NOT a request body field). Share endpoint is POST /api/items/{id}/share, consume via GET /api/share/{token}. /api/admin/stats is MISSING route decorator so admin panel will 404 against it.",
+  "rca of the issue": "admin stats 404 root cause: handler `async def admin_stats(...)` at server.py L877 is a plain async function — no @router.get / @app.get decorator — so FastAPI never registers the path. Fix: prepend `@router.get('/admin/stats')` on the line above the function signature."
+}
