@@ -1,6 +1,6 @@
 import {useEffect, useMemo, useRef, useState} from 'react';
 import axios from 'axios';
-import {ShieldCheck, LockKeyhole, Plus, Search, Eye, EyeOff, Copy, Download, Trash2, LogOut, KeyRound, ArrowUpRight, X, Check, RefreshCw, Pencil, Wand2, Upload, Share2, Activity, ShieldAlert, Gauge, Timer, Lock, HelpCircle, Settings, Calendar, Shield, AlertTriangle, FileText, Skull, Menu, Sun, Moon, History, Monitor, Star, Tag, Hash, Command, Users, Printer} from 'lucide-react';
+import {ShieldCheck, LockKeyhole, Plus, Search, Eye, EyeOff, Copy, Download, Trash2, LogOut, KeyRound, ArrowUpRight, X, Check, RefreshCw, Pencil, Wand2, Upload, Share2, Activity, ShieldAlert, Gauge, Timer, Lock, HelpCircle, Settings, Calendar, Shield, AlertTriangle, FileText, Skull, Menu, Sun, Moon, History, Monitor, Star, Tag, Hash, Command, Users, Printer, Crown, Sparkles} from 'lucide-react';
 import './App.css';
 import './brand.css';
 import './NewFeatures.css';
@@ -8,6 +8,7 @@ import {Toaster, toast} from 'sonner';
 import AdminPanel from './AdminPanel';
 import LandingPage from './LandingPage';
 import LoadingScreen from './LoadingScreen';
+import VipModal from './VipModal';
 import VaultItems from './VaultItems';
 import SettingsPanel from './SettingsPanel';
 import {CommandPalette, CSVImportModal, RecoverySheet, EmergencyAccessModal, EmergencyPortal} from './NewFeatures';
@@ -134,7 +135,7 @@ function Auth({onLogin}){
   );
 }
 
-function Vault({user,onLogout}){
+function Vault({user,onLogout,onUserUpdate}){
   const inactivityRef=useRef(null);
   const [items,setItems]=useState([]);
   const [query,setQuery]=useState('');
@@ -179,6 +180,7 @@ function Vault({user,onLogout}){
   const [showTerms,setShowTerms]=useState(false);
   const [showPrivacy,setShowPrivacy]=useState(false);
   const [showSecuritySettings,setShowSecuritySettings]=useState(false);
+  const [showVip,setShowVip]=useState(false);
   const [l3Passwords,setL3Passwords]=useState(null);
   const [l3Enabled,setL3Enabled]=useState(user.layer3_enabled||false);
   const [showL3View,setShowL3View]=useState(false);
@@ -532,8 +534,9 @@ function Vault({user,onLogout}){
       <div className="side-label lower">SECURITY</div>
       <div className="nav-item" data-testid="settings-nav" onClick={()=>setShowSettings(true)}><Settings size={17}/>Settings</div>
       <div className="nav-item" data-testid="help-nav" onClick={()=>setShowHelp(true)}><HelpCircle size={17}/>Help &amp; Guide</div>
+      <div className={user.is_vip?"nav-item nav-vip-active":"nav-item nav-vip"} data-testid="vip-nav" onClick={()=>setShowVip(true)}><Crown size={17}/>{user.is_vip?'VIP · Active':'Upgrade to VIP'}</div>
       <div className="side-note"><span className="status-dot"/>All systems protected</div>
-      <div className="side-bottom"><div className="user-pill"><div className="avatar">{user.name?.[0]?.toUpperCase()}</div><div><b data-testid="user-email">{user.email}</b><small>Personal vault</small></div></div><button className="icon-btn" data-testid="logout-button" onClick={onLogout} title="Sign out"><LogOut size={17}/></button></div>
+      <div className="side-bottom"><div className="user-pill"><div className="avatar">{user.name?.[0]?.toUpperCase()}</div><div><b data-testid="user-email">{user.email} {user.is_vip&&<span className="vip-badge" data-testid="user-vip-badge" title="VIP"><Crown size={10}/> VIP</span>}</b><small>Personal vault</small></div></div><button className="icon-btn" data-testid="logout-button" onClick={onLogout} title="Sign out"><LogOut size={17}/></button></div>
     </aside>
 
     <main className="vault-main">
@@ -754,6 +757,14 @@ function Vault({user,onLogout}){
       </div>}
     </div></div>}
 
+    {/* VIP upgrade / status modal */}
+    {showVip&&<VipModal
+      client={client}
+      authHeader={authHeader}
+      onClose={()=>setShowVip(false)}
+      onPurchased={(u)=>{onUserUpdate&&onUserUpdate(u);toast.success('VIP activated — thank you!')}}
+    />}
+
     {/* Disclaimer */}
     {showDisclaimer&&<div className="modal-backdrop" style={{zIndex:10}}><div className="modal disclaimer-modal" data-testid="disclaimer-modal">
       <div style={{textAlign:'center',marginBottom:'16px'}}><AlertTriangle size={40} style={{color:'#fbbf24'}}/></div>
@@ -883,7 +894,7 @@ export default function App(){
   if(isAdminRoute&&!user)return <Auth onLogin={(u)=>{setUser(u);setShowLanding(false);setShowAuth(false)}}/>;
   if(isAdminRoute&&user)return <AdminPanel user={user} onLogout={logout}/>;
   const onLogin=(u)=>{setUser(u);setShowLanding(false);setShowAuth(false)};
-  if(user)return <Vault user={user} onLogout={logout}/>;
+  if(user)return <Vault user={user} onLogout={logout} onUserUpdate={(u)=>setUser(prev=>({...prev,...u}))}/>;
   if(showAuth)return <Auth onLogin={onLogin}/>;
   return <LandingPage onGetStarted={()=>{setShowLanding(false);setShowAuth(true)}}/>;
 }

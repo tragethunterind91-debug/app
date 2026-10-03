@@ -121,7 +121,15 @@ def auth_user(authorization, require_full=True, cookie_token: str | None = None)
             raise HTTPException(403, 'Complete all authentication steps first')
         return claims
     except JWTError: raise HTTPException(401, 'Session expired')
+def is_vip_active(u):
+    vip_until = u.get('vip_until')
+    if not vip_until: return False
+    try:
+        return parse_iso_datetime(vip_until) > datetime.now(timezone.utc)
+    except Exception:
+        return False
 def public_user(u):
+    vip_active = is_vip_active(u)
     return {
         'id': u['id'], 'email': u['email'], 'name': u.get('name', u['email'].split('@')[0]),
         'has_birthday': bool(u.get('birthday_hash')),
@@ -130,7 +138,16 @@ def public_user(u):
         'hardcore_enabled': u.get('hardcore_enabled', False),
         'l3_viewed': u.get('l3_viewed', False),
         'advance_global_locked_until': u.get('advance_global_locked_until'),
+        'is_vip': vip_active,
+        'vip_until': u.get('vip_until') if vip_active else None,
     }
+async def require_vip(authorization):
+    """Dependency-style guard for future VIP-only features (not applied yet)."""
+    claims = auth_user(authorization)
+    u = await db.users.find_one({'id': claims['sub']}, {'_id': 0})
+    if not u or not is_vip_active(u):
+        raise HTTPException(402, 'VIP required')
+    return claims
 def safe_item(doc):
     return {'id': doc['id'], 'name': doc['name'], 'category': doc.get('category','Secret'), 'url': doc.get('url',''), 'advance_mode': doc.get('advance_mode', False), 'advance_locked_until': doc.get('advance_locked_until'), 'created_at': doc['created_at'], 'updated_at': doc['updated_at'], 'has_totp': bool(doc.get('totp_enc')), 'tags': doc.get('tags', []), 'favorite': doc.get('favorite', False), 'notes': doc.get('notes', ''), 'custom_fields': doc.get('custom_fields', [])}
 async def log_event(user_id: str, action: str, detail: str = ''):
@@ -807,7 +824,56 @@ async def submit_recovery(data: RecoveryReqIn):
     await db.recovery_requests.insert_one({'email':data.email,'user_id_hint':data.user_id_hint,'app_name':data.app_name,'description':data.description,'status':'pending','created_at':datetime.now(timezone.utc).isoformat()})
     return {'ok':True,'message':'Request submitted. The TopPass5 team will review and contact you.'}
 
-@router.get('/admin/stats')
+VIP_DURATION_DAYS = 75   # 2 months + 15 days
+VIP_PRICE_USD = 1.50
+
+@router.get('/vip/status')
+async def vip_status(authorization: str | None = Header(default=None)):
+    claims = auth_user(authorization)
+    u = await db.users.find_one({'id': claims['sub']}, {'_id': 0})
+    if not u: raise HTTPException(404, 'User not found')
+    active = is_vip_active(u)
+    until = u.get('vip_until')
+    days_remaining = 0
+    if active and until:
+        try:
+            days_remaining = max(0, (parse_iso_datetime(until) - datetime.now(timezone.utc)).days)
+        except Exception:
+            days_remaining = 0
+    return {
+        'is_vip': active,
+        'vip_until': until if active else None,
+        'days_remaining': days_remaining,
+        'price_usd': VIP_PRICE_USD,
+        'duration_days': VIP_DURATION_DAYS,
+        'purchases': len(u.get('vip_purchases', [])),
+    }
+
+@router.post('/vip/purchase')
+async def vip_purchase(authorization: str | None = Header(default=None)):
+    """DEMO / FAKE payment. Flips VIP flag server-side. Swap for Stripe later."""
+    claims = auth_user(authorization)
+    u = await db.users.find_one({'id': claims['sub']}, {'_id': 0})
+    if not u: raise HTTPException(404, 'User not found')
+    now = datetime.now(timezone.utc)
+    # Extend from current vip_until if still active, otherwise from now
+    base = now
+    if is_vip_active(u):
+        try:
+            base = max(base, parse_iso_datetime(u['vip_until']))
+        except Exception:
+            pass
+    new_until = base + timedelta(days=VIP_DURATION_DAYS)
+    purchase = {'id': str(uuid.uuid4()), 'ts': now.isoformat(), 'amount_usd': VIP_PRICE_USD, 'provider': 'demo', 'days': VIP_DURATION_DAYS}
+    await db.users.update_one({'id': claims['sub']}, {
+        '$set': {'vip_until': new_until.isoformat()},
+        '$push': {'vip_purchases': purchase},
+    })
+    await log_event(claims['sub'], 'VIP_PURCHASE', f"demo ${VIP_PRICE_USD} +{VIP_DURATION_DAYS}d")
+    u = await db.users.find_one({'id': claims['sub']}, {'_id': 0})
+    return {'ok': True, 'user': public_user(u), 'purchase': purchase}
+
+
 async def admin_stats(authorization: str | None = Header(default=None)):
     user=auth_user(authorization)
     if not user.get('is_admin'): raise HTTPException(403,'Owner access only')
@@ -822,7 +888,29 @@ async def admin_stats(authorization: str | None = Header(default=None)):
     requests=await db.recovery_requests.find({'status':'pending'},{'_id':0}).sort('created_at',-1).to_list(50)
     online_today=await db.users.count_documents({'last_seen':{'$gt':today}})
     online_now=await db.users.count_documents({'last_seen':{'$gt':(datetime.now(timezone.utc)-timedelta(hours=1)).isoformat()}})
-    return {'total_users':total_users,'total_items':total_items,'adv_items':adv_items,'today_logins':today_logins,'week_logins':week_logins,'online_today':online_today,'online_now':online_now,'pending_recovery':pending,'recovery_requests':requests}
+    # VIP metrics (M1–M5)
+    now_iso = datetime.now(timezone.utc).isoformat()
+    vip_active = await db.users.count_documents({'vip_until': {'$gt': now_iso}})
+    vip_purchases_agg = await db.users.aggregate([
+        {'$project': {'count': {'$size': {'$ifNull': ['$vip_purchases', []]}}}},
+        {'$group': {'_id': None, 'total': {'$sum': '$count'}}},
+    ]).to_list(1)
+    vip_sold_total = vip_purchases_agg[0]['total'] if vip_purchases_agg else 0
+    vip_revenue_usd = round(vip_sold_total * VIP_PRICE_USD, 2)
+    hardcore_users = await db.users.count_documents({'hardcore_enabled': True})
+    totp_items = await db.items.count_documents({'totp_enc': {'$exists': True}})
+    return {
+        'total_users':total_users,'total_items':total_items,'adv_items':adv_items,
+        'today_logins':today_logins,'week_logins':week_logins,
+        'online_today':online_today,'online_now':online_now,
+        'pending_recovery':pending,'recovery_requests':requests,
+        # VIP metrics
+        'vip_active': vip_active,
+        'vip_sold_total': vip_sold_total,
+        'vip_revenue_usd': vip_revenue_usd,
+        'hardcore_users': hardcore_users,
+        'totp_items': totp_items,
+    }
 
 @router.patch('/admin/recovery/{req_id}')
 async def update_recovery(req_id: str, data: dict, authorization: str | None = Header(default=None)):
