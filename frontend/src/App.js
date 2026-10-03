@@ -9,6 +9,7 @@ import AdminPanel from './AdminPanel';
 import LandingPage from './LandingPage';
 import LoadingScreen from './LoadingScreen';
 import VipModal from './VipModal';
+import VipSettings from './VipSettings';
 import VaultItems from './VaultItems';
 import SettingsPanel from './SettingsPanel';
 import {CommandPalette, CSVImportModal, RecoverySheet, EmergencyAccessModal, EmergencyPortal} from './NewFeatures';
@@ -35,6 +36,11 @@ function Auth({onLogin}){
   const [birthdayInput,setBirthdayInput]=useState('');
   const [quizIndices,setQuizIndices]=useState([]);
   const [quizAnswers,setQuizAnswers]=useState({});
+  const [whoQuestion,setWhoQuestion]=useState('');
+  const [whoAnswer,setWhoAnswer]=useState('');
+  const [mcqChallenge,setMcqChallenge]=useState(null); // {id,q,options,time_limit_sec}
+  const [mcqSelected,setMcqSelected]=useState(null);
+  const [mcqRemaining,setMcqRemaining]=useState(0);
   const [regBirthday,setRegBirthday]=useState('');
   const [regBirthdayConfirm,setRegBirthdayConfirm]=useState('');
   const [loginStatus,setLoginStatus]=useState(null);
@@ -53,26 +59,29 @@ function Auth({onLogin}){
         onLogin(r.data.user);
       }else{
         const r=await client.post('/auth/login',{email,password});
-        if(r.data.stage==='birthday'){
-          setStageToken(r.data.token);setLoginStage('birthday');setBirthdayInput('');
-        }else{
-          localStorage.removeItem('vault_token');
-          if('credentials' in navigator&&window.PasswordCredential){try{const c=new window.PasswordCredential({id:email,password,name:r.data.user?.name});await navigator.credentials.store(c)}catch{}}
-          onLogin(r.data.user);
-        }
+        if(_advanceStage(r))return;
+        localStorage.removeItem('vault_token');
+        if('credentials' in navigator&&window.PasswordCredential){try{const c=new window.PasswordCredential({id:email,password,name:r.data.user?.name});await navigator.credentials.store(c)}catch{}}
+        onLogin(r.data.user);
       }
     }catch(e){const msg=formatApiError(e.response?.data?.detail)||'Could not sign in';setAuthError(msg);toast.error(msg)}finally{setBusy(false)}
+  };
+
+  const _advanceStage=(r)=>{
+    const stage=r.data?.stage;
+    if(stage==='birthday'){setStageToken(r.data.token);setLoginStage('birthday');setBirthdayInput('');return true;}
+    if(stage==='layer3'){setStageToken(r.data.token);setQuizIndices(r.data.quiz_indices);setQuizAnswers({});setLoginStage('layer3');return true;}
+    if(stage==='who_pass'){setStageToken(r.data.token);setWhoQuestion(r.data.question||'');setWhoAnswer('');setLoginStage('who_pass');return true;}
+    if(stage==='mcq'){setStageToken(r.data.token);setMcqChallenge({id:r.data.challenge_id,q:r.data.question,options:r.data.options,time_limit_sec:r.data.time_limit_sec});setMcqSelected(null);setMcqRemaining(r.data.time_limit_sec||60);setLoginStage('mcq');return true;}
+    return false;
   };
 
   const submitBirthday=async()=>{
     setBusy(true);
     try{
       const r=await client.post('/auth/verify-birthday',{birthday:birthdayInput},{headers:{Authorization:`Bearer ${stageToken}`}});
-      if(r.data.stage==='layer3'){
-        setStageToken(r.data.token);setQuizIndices(r.data.quiz_indices);setQuizAnswers({});setLoginStage('layer3');
-      }else{
-        localStorage.removeItem('vault_token');onLogin(r.data.user);setLoginStage(null);
-      }
+      if(_advanceStage(r))return;
+      localStorage.removeItem('vault_token');onLogin(r.data.user);setLoginStage(null);
     }catch(e){const msg=formatApiError(e.response?.data?.detail)||'Birthday verification failed';setAuthError(msg);toast.error(msg)}finally{setBusy(false)}
   };
 
@@ -80,9 +89,37 @@ function Auth({onLogin}){
     setBusy(true);
     try{
       const r=await client.post('/auth/verify-layer3',{answers:quizAnswers},{headers:{Authorization:`Bearer ${stageToken}`}});
+      if(_advanceStage(r))return;
       localStorage.removeItem('vault_token');onLogin(r.data.user);setLoginStage(null);
     }catch(e){const msg=formatApiError(e.response?.data?.detail)||'Layer 3 verification failed';setAuthError(msg);toast.error(msg)}finally{setBusy(false)}
   };
+
+  const submitWhoPass=async()=>{
+    setBusy(true);
+    try{
+      const r=await client.post('/auth/verify-who-pass',{answer:whoAnswer},{headers:{Authorization:`Bearer ${stageToken}`}});
+      if(_advanceStage(r))return;
+      localStorage.removeItem('vault_token');onLogin(r.data.user);setLoginStage(null);
+    }catch(e){const msg=formatApiError(e.response?.data?.detail)||'WHO Pass failed';setAuthError(msg);toast.error(msg)}finally{setBusy(false)}
+  };
+
+  const submitMcqPass=async()=>{
+    if(mcqSelected===null)return;
+    setBusy(true);
+    try{
+      const r=await client.post('/auth/verify-mcq-pass',{challenge_id:mcqChallenge.id,answer_idx:mcqSelected},{headers:{Authorization:`Bearer ${stageToken}`}});
+      if(_advanceStage(r))return;
+      localStorage.removeItem('vault_token');onLogin(r.data.user);setLoginStage(null);
+    }catch(e){const msg=formatApiError(e.response?.data?.detail)||'MCQ Pass failed';setAuthError(msg);toast.error(msg)}finally{setBusy(false)}
+  };
+
+  // MCQ countdown
+  useEffect(()=>{
+    if(loginStage!=='mcq'||!mcqChallenge)return;
+    if(mcqRemaining<=0){toast.error('Time out — restart login.');setLoginStage(null);setStageToken(null);setMcqChallenge(null);return;}
+    const t=setTimeout(()=>setMcqRemaining(x=>x-1),1000);
+    return()=>clearTimeout(t);
+  },[loginStage,mcqChallenge,mcqRemaining]);
 
   if(loginStage==='birthday')return(
     <main className="auth-shell"><section className="auth-art"><div className="brand"><img src="/toppass5-logo-sm.jpeg" alt="TopPass5" className="brand-logo-mark"/></div><div className="art-copy"><p className="eyebrow">LAYER 2 VERIFICATION</p><h1>Verify your<br/><em>identity.</em></h1><p>Enter your birthday to continue. This is a security checkpoint.</p></div><div className="security-stamp"><Calendar size={17}/><span>Birthday verification<br/><b>No forgot option — by design</b></span></div></section>
@@ -101,6 +138,36 @@ function Auth({onLogin}){
       {quizIndices.map(idx=><label key={idx}>Pass #{idx+1}<input data-testid={`quiz-answer-${idx}`} type="text" maxLength={5} value={quizAnswers[String(idx)]||''} onChange={e=>setQuizAnswers(p=>({...p,[String(idx)]:e.target.value}))} placeholder="e.g. k8#mQ" autoComplete="off" style={{fontFamily:"'DM Mono',monospace",letterSpacing:'0.15em'}}/></label>)}
       <button className="primary wide" data-testid="quiz-submit-btn" disabled={busy||quizIndices.some(i=>!(quizAnswers[String(i)]||'').trim())} onClick={submitLayer3Quiz}>{busy?'Verifying…':'Verify & Unlock'} <Lock size={16}/></button>
       <button className="link-btn" data-testid="quiz-back-btn" onClick={()=>{setLoginStage(null);setStageToken(null)}}>← Back to login</button>
+    </div></section><Toaster theme="dark"/></main>
+  );
+
+  if(loginStage==='who_pass')return(
+    <main className="auth-shell"><section className="auth-art"><div className="brand"><img src="/toppass5-logo-sm.jpeg" alt="TopPass5" className="brand-logo-mark"/></div><div className="art-copy"><p className="eyebrow">LAYER 4 — WHO PASS</p><h1>Answer the<br/><em>WHO Pass.</em></h1><p>A personal challenge you set up. Only you know the answer.</p></div><div className="security-stamp"><HelpCircle size={17}/><span>Personal secret question<br/><b>4 tries then 3-hour lockout</b></span></div></section>
+    <section className="auth-panel"><div className="auth-card"><div className="mobile-brand brand"><img src="/toppass5-logo-sm.jpeg" alt="TopPass5" className="brand-logo-mark"/></div>
+      <p className="eyebrow">LAYER 4 — WHO PASS</p><h2>{whoQuestion||'Answer your WHO Pass'}</h2><p className="muted">Case-sensitivity follows your setup. There is no recovery for this.</p>
+      <label>Your answer<input data-testid="who-pass-input" type="text" value={whoAnswer} onChange={e=>setWhoAnswer(e.target.value)} autoFocus autoComplete="off"/></label>
+      <button className="primary wide" data-testid="who-pass-submit" disabled={busy||!whoAnswer} onClick={submitWhoPass}>{busy?'Verifying…':'Submit WHO Pass'} <ArrowUpRight size={17}/></button>
+      <button className="link-btn" data-testid="who-pass-back-btn" onClick={()=>{setLoginStage(null);setStageToken(null)}}>← Back to login</button>
+    </div></section><Toaster theme="dark"/></main>
+  );
+
+  if(loginStage==='mcq'&&mcqChallenge)return(
+    <main className="auth-shell"><section className="auth-art"><div className="brand"><img src="/toppass5-logo-sm.jpeg" alt="TopPass5" className="brand-logo-mark"/></div><div className="art-copy"><p className="eyebrow">LAYER 5 — MCQ PASS</p><h1>Pick the<br/><em>right option.</em></h1><p>A timed knowledge check you configured. Choose carefully — the timer is running.</p></div><div className="security-stamp"><Timer size={17}/><span>Timed MCQ challenge<br/><b>{mcqChallenge.time_limit_sec}s default · one shot</b></span></div></section>
+    <section className="auth-panel"><div className="auth-card"><div className="mobile-brand brand"><img src="/toppass5-logo-sm.jpeg" alt="TopPass5" className="brand-logo-mark"/></div>
+      <p className="eyebrow">LAYER 5 — MCQ PASS</p><h2>{mcqChallenge.q}</h2>
+      <p className="muted" data-testid="mcq-remaining" style={{color:mcqRemaining<=10?'#EF4444':undefined}}>Time left: <b>{mcqRemaining}s</b></p>
+      <div style={{display:'flex',flexDirection:'column',gap:10,margin:'10px 0 18px'}}>
+        {mcqChallenge.options.map((opt,i)=>(
+          <button key={i} type="button" data-testid={`mcq-option-${i}`}
+            onClick={()=>setMcqSelected(i)}
+            className={mcqSelected===i?'primary wide':'secondary wide'}
+            style={{justifyContent:'flex-start',textAlign:'left'}}>
+            <span style={{opacity:.6,marginRight:10,fontFamily:"'DM Mono',monospace"}}>{String.fromCharCode(65+i)}.</span> {opt}
+          </button>
+        ))}
+      </div>
+      <button className="primary wide" data-testid="mcq-submit-btn" disabled={busy||mcqSelected===null||mcqRemaining<=0} onClick={submitMcqPass}>{busy?'Verifying…':'Submit MCQ Pass'} <Check size={16}/></button>
+      <button className="link-btn" data-testid="mcq-back-btn" onClick={()=>{setLoginStage(null);setStageToken(null);setMcqChallenge(null)}}>← Back to login</button>
     </div></section><Toaster theme="dark"/></main>
   );
 
@@ -181,6 +248,7 @@ function Vault({user,onLogout,onUserUpdate}){
   const [showPrivacy,setShowPrivacy]=useState(false);
   const [showSecuritySettings,setShowSecuritySettings]=useState(false);
   const [showVip,setShowVip]=useState(false);
+  const [showVipSettings,setShowVipSettings]=useState(false);
   const [l3Passwords,setL3Passwords]=useState(null);
   const [l3Enabled,setL3Enabled]=useState(user.layer3_enabled||false);
   const [showL3View,setShowL3View]=useState(false);
@@ -535,6 +603,7 @@ function Vault({user,onLogout,onUserUpdate}){
       <div className="nav-item" data-testid="settings-nav" onClick={()=>setShowSettings(true)}><Settings size={17}/>Settings</div>
       <div className="nav-item" data-testid="help-nav" onClick={()=>setShowHelp(true)}><HelpCircle size={17}/>Help &amp; Guide</div>
       <div className={user.is_vip?"nav-item nav-vip-active":"nav-item nav-vip"} data-testid="vip-nav" onClick={()=>setShowVip(true)}><Crown size={17}/>{user.is_vip?'Membership · Active':'Membership'}</div>
+      {user.is_vip&&<div className="nav-item nav-vip" data-testid="vip-settings-nav" onClick={()=>setShowVipSettings(true)}><Sparkles size={17}/>VIP Settings</div>}
       <div className="side-note"><span className="status-dot"/>All systems protected</div>
       <div className="side-bottom"><div className="user-pill"><div className="avatar">{user.name?.[0]?.toUpperCase()}</div><div><b data-testid="user-email">{user.email} {user.is_vip&&<span className="vip-badge" data-testid="user-vip-badge" title="VIP"><Crown size={10}/> VIP</span>}</b><small>Personal vault</small></div></div><button className="icon-btn" data-testid="logout-button" onClick={onLogout} title="Sign out"><LogOut size={17}/></button></div>
     </aside>
@@ -763,6 +832,15 @@ function Vault({user,onLogout,onUserUpdate}){
       authHeader={authHeader}
       onClose={()=>setShowVip(false)}
       onPurchased={(u)=>{onUserUpdate&&onUserUpdate(u);toast.success('VIP activated — thank you!')}}
+    />}
+
+    {/* VIP settings — full capability control panel */}
+    {showVipSettings&&<VipSettings
+      client={client}
+      authHeader={authHeader}
+      user={user}
+      onClose={()=>setShowVipSettings(false)}
+      onLogoutAll={()=>{setShowVipSettings(false);onLogout();}}
     />}
 
     {/* Disclaimer */}

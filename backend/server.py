@@ -86,8 +86,30 @@ class VipSettingsIn(BaseModel):
     session_timeout_min: int | None = Field(default=None, ge=1, le=43200)  # 1 min - 30 days
     self_destruct_at: str | None = None  # ISO date; wiped when passed
     theme: str = Field(default='default')  # default|matrix|neon|pastel
+    # Login windows: list of {days:list[int 0..6], start:'HH:MM', end:'HH:MM'}. Empty = no restriction.
+    login_windows: list[dict] = Field(default_factory=list, max_length=8)
 class EngineerBlobIn(BaseModel):
     data: str  # size enforced by handler (returns 413 when exceeded)
+class WhoPassIn(BaseModel):
+    enabled: bool
+    question: str = Field(min_length=3, max_length=200)
+    answer: str = Field(min_length=1, max_length=200)
+    case_sensitive: bool = True
+class WhoVerifyIn(BaseModel):
+    answer: str
+class McqOption(BaseModel):
+    text: str = Field(min_length=1, max_length=200)
+class McqQuestion(BaseModel):
+    q: str = Field(min_length=1, max_length=300)
+    options: list[str] = Field(min_length=2, max_length=4)
+    correct_idx: int = Field(ge=0, le=3)
+class McqPassIn(BaseModel):
+    enabled: bool
+    time_limit_sec: int = Field(default=60, ge=5, le=600)
+    questions: list[McqQuestion] = Field(min_length=1, max_length=10)
+class McqVerifyIn(BaseModel):
+    challenge_id: str
+    answer_idx: int
 class PhraseIn(BaseModel):
     email: EmailStr
     phrase: str
@@ -166,8 +188,32 @@ def is_vip_active(u):
         return parse_iso_datetime(vip_until) > datetime.now(timezone.utc)
     except Exception:
         return False
+def is_super_vip_active(u):
+    sv_until = u.get('super_vip_until')
+    if not sv_until: return False
+    try:
+        return parse_iso_datetime(sv_until) > datetime.now(timezone.utc)
+    except Exception:
+        return False
+def _login_window_allows(windows: list, now_utc: datetime) -> bool:
+    """Return True when at least one window matches, or windows is empty."""
+    if not windows:
+        return True
+    # Use UTC for consistency with stored times (user picks UTC in UI).
+    weekday = now_utc.weekday()  # 0..6 Mon..Sun
+    hhmm = now_utc.strftime('%H:%M')
+    for w in windows:
+        days = w.get('days') or []
+        if days and weekday not in days:
+            continue
+        start = w.get('start') or '00:00'
+        end = w.get('end') or '23:59'
+        if start <= hhmm <= end:
+            return True
+    return False
 def public_user(u):
     vip_active = is_vip_active(u)
+    super_vip = is_super_vip_active(u)
     vs = u.get('vip_settings') or {}
     return {
         'id': u['id'], 'email': u['email'], 'name': u.get('name', u['email'].split('@')[0]),
@@ -177,9 +223,13 @@ def public_user(u):
         'hardcore_enabled': u.get('hardcore_enabled', False),
         'l3_viewed': u.get('l3_viewed', False),
         'advance_global_locked_until': u.get('advance_global_locked_until'),
-        'is_vip': vip_active,
+        'is_vip': vip_active or super_vip,
+        'is_super_vip': super_vip,
         'vip_until': u.get('vip_until') if vip_active else None,
+        'super_vip_until': u.get('super_vip_until') if super_vip else None,
         'theme': vs.get('theme', 'default'),
+        'who_pass_enabled': bool((u.get('who_pass') or {}).get('enabled')),
+        'mcq_pass_enabled': bool((u.get('mcq_pass') or {}).get('enabled')),
     }
 async def verify_fresh_session(claims: dict) -> dict:
     """Lightweight DB lookup used by sensitive endpoints to honour logout-all + self-destruct."""
@@ -205,10 +255,10 @@ async def verify_fresh_session(claims: dict) -> dict:
             pass
     return u
 async def require_vip(authorization):
-    """Dependency-style guard for VIP-only endpoints."""
+    """Dependency-style guard for VIP-only endpoints. Accepts VIP or Super VIP."""
     claims = auth_user(authorization)
     u = await verify_fresh_session(claims)
-    if not is_vip_active(u):
+    if not (is_vip_active(u) or is_super_vip_active(u)):
         raise HTTPException(402, 'VIP required')
     return claims, u
 def safe_item(doc):
@@ -347,7 +397,7 @@ async def _enforce_vip_login_policy(user, request: Request) -> tuple[bool, str]:
                 return False, 'Vault self-destructed as scheduled.'
         except Exception:
             pass
-    is_vip = is_vip_active(user)
+    is_vip = is_vip_active(user) or is_super_vip_active(user)
     ip = client_ip(request)
     country = client_country(request)
     if is_vip:
@@ -357,8 +407,14 @@ async def _enforce_vip_login_policy(user, request: Request) -> tuple[bool, str]:
         allowed_countries = vs.get('allowed_countries') or []
         if allowed_countries and country and country not in allowed_countries:
             return False, f'Login blocked: country {country} is not on your allowlist.'
-    # Device cap — VIP = 2, Free = 1. Devices are keyed by SHA-256 of user-agent.
-    cap = VIP_TRUSTED_DEVICES if is_vip else FREE_TRUSTED_DEVICES
+        windows = vs.get('login_windows') or []
+        if windows and not _login_window_allows(windows, now):
+            return False, 'Login blocked: outside your allowed login time window.'
+    # Device cap — Super VIP = 4, VIP = 2, Free = 1. Devices are keyed by SHA-256 of user-agent.
+    if is_super_vip_active(user):
+        cap = 4
+    else:
+        cap = VIP_TRUSTED_DEVICES if is_vip else FREE_TRUSTED_DEVICES
     did = device_id_from_request(request)
     devices = (vs.get('devices') or [])
     existing = next((d for d in devices if d['id'] == did), None)
@@ -510,7 +566,27 @@ async def verify_birthday(data: BirthdayVerify, request: Request, response: Resp
         await db.users.update_one({'id': user['id']}, {'$set': {'pending_quiz': quiz_indices}})
         await log_event(user['id'], 'BIRTHDAY_VERIFIED', user['email'])
         return {'stage': 'layer3', 'token': stage_token, 'quiz_indices': quiz_indices}
-    # Birthday verified, no L3 - grant full access
+    # Birthday verified, no L3 - fall through to WHO/MCQ or complete.
+    return await _finalize_or_next_stage(user, request, response)
+
+async def _finalize_or_next_stage(user: dict, request: Request, response: Response) -> dict:
+    """After password+birthday(+L3) succeed, continue through WHO Pass → MCQ Pass → complete.
+    Returns the response dict for the current step."""
+    who = user.get('who_pass') or {}
+    if who.get('enabled'):
+        stage_token = token_for(user, stage='who_pass')
+        set_auth_cookie(response, stage_token)
+        return {'stage': 'who_pass', 'token': stage_token, 'question': who.get('question', '')}
+    mcq = user.get('mcq_pass') or {}
+    if mcq.get('enabled') and mcq.get('questions'):
+        import random as _r
+        q = _r.choice(mcq['questions'])
+        challenge_id = secrets.token_urlsafe(12)
+        await db.users.update_one({'id': user['id']}, {'$set': {'pending_mcq': {'id': challenge_id, 'correct_idx': q['correct_idx'], 'expires': (datetime.now(timezone.utc) + timedelta(seconds=mcq.get('time_limit_sec', 60))).isoformat()}}})
+        stage_token = token_for(user, stage='mcq')
+        set_auth_cookie(response, stage_token)
+        return {'stage': 'mcq', 'token': stage_token, 'challenge_id': challenge_id, 'question': q['q'], 'options': q['options'], 'time_limit_sec': mcq.get('time_limit_sec', 60)}
+    # All gates passed — grant full access.
     await _reset_login_fails(user)
     await db.users.update_one({'id': user['id']}, {'$set': {'last_seen': datetime.now(timezone.utc).isoformat()}})
     await record_login_history(user['id'], request)
@@ -544,14 +620,70 @@ async def verify_layer3(data: L3QuizAnswer, request: Request, response: Response
                     raise HTTPException(410, 'Account permanently deleted — too many Layer 3 failures (Hardcore Mode).')
             await log_event(user['id'], 'L3_FAIL', f"fails={fl['layer3_fails']}")
             raise HTTPException(401, f'Layer 3 verification failed. Wrong answer for pass {idx + 1}.')
-    # All correct - grant full access
-    await _reset_login_fails(user)
-    await db.users.update_one({'id': user['id']}, {'$set': {'last_seen': datetime.now(timezone.utc).isoformat(), 'failed_logins.layer3_fails': 0, 'pending_quiz': []}})
-    await record_login_history(user['id'], request)
-    await log_event(user['id'], 'LOGIN', user['email'])
-    token = token_for(user)
-    set_auth_cookie(response, token)
-    return {'stage': 'complete', 'token': token, 'user': public_user(user)}
+    # All correct - fall through to WHO/MCQ or complete.
+    await db.users.update_one({'id': user['id']}, {'$set': {'failed_logins.layer3_fails': 0, 'pending_quiz': []}})
+    user = await db.users.find_one({'id': user['id']}, {'_id': 0})
+    return await _finalize_or_next_stage(user, request, response)
+
+@router.post('/auth/verify-who-pass')
+@limiter.limit('20/minute')
+async def verify_who_pass(data: WhoVerifyIn, request: Request, response: Response, authorization: str | None = Header(default=None)):
+    claims = auth_user(authorization, require_full=False)
+    if claims.get('stage') != 'who_pass':
+        raise HTTPException(403, 'Not in WHO Pass stage')
+    user = await db.users.find_one({'id': claims['sub']}, {'_id': 0})
+    if not user: raise HTTPException(404, 'User not found')
+    who = user.get('who_pass') or {}
+    if not who.get('enabled') or not who.get('answer_hash'):
+        return await _finalize_or_next_stage(user, request, response)
+    expected = who['answer_hash']
+    given = data.answer
+    if not who.get('case_sensitive', True):
+        given = given.lower()
+    if hashlib.sha256(given.encode()).hexdigest() != expected:
+        fails = int((who.get('fails') or 0)) + 1
+        update = {'who_pass.fails': fails}
+        if fails >= 4:
+            update['who_pass.locked_until'] = (datetime.now(timezone.utc) + timedelta(hours=3)).isoformat()
+        await db.users.update_one({'id': user['id']}, {'$set': update})
+        await log_event(user['id'], 'WHO_FAIL', f'fails={fails}')
+        raise HTTPException(401, 'WHO Pass answer is incorrect.')
+    # Lockout window still in effect?
+    locked = (who.get('locked_until'))
+    if locked:
+        try:
+            if parse_iso_datetime(locked) > datetime.now(timezone.utc):
+                raise HTTPException(423, 'WHO Pass is locked. Try again later.')
+        except HTTPException: raise
+        except Exception: pass
+    await db.users.update_one({'id': user['id']}, {'$set': {'who_pass.fails': 0}, '$unset': {'who_pass.locked_until': ''}})
+    user = await db.users.find_one({'id': user['id']}, {'_id': 0})
+    return await _finalize_or_next_stage(user, request, response)
+
+@router.post('/auth/verify-mcq-pass')
+@limiter.limit('20/minute')
+async def verify_mcq_pass(data: McqVerifyIn, request: Request, response: Response, authorization: str | None = Header(default=None)):
+    claims = auth_user(authorization, require_full=False)
+    if claims.get('stage') != 'mcq':
+        raise HTTPException(403, 'Not in MCQ Pass stage')
+    user = await db.users.find_one({'id': claims['sub']}, {'_id': 0})
+    if not user: raise HTTPException(404, 'User not found')
+    pending = user.get('pending_mcq') or {}
+    if pending.get('id') != data.challenge_id:
+        raise HTTPException(400, 'Unknown or stale challenge. Restart login.')
+    try:
+        if parse_iso_datetime(pending.get('expires','')) <= datetime.now(timezone.utc):
+            await db.users.update_one({'id': user['id']}, {'$set': {'pending_mcq': {}}})
+            raise HTTPException(408, 'MCQ Pass timed out. Restart login.')
+    except HTTPException: raise
+    except Exception: pass
+    if int(data.answer_idx) != int(pending.get('correct_idx', -1)):
+        await log_event(user['id'], 'MCQ_FAIL', '')
+        raise HTTPException(401, 'MCQ Pass answer is incorrect.')
+    await db.users.update_one({'id': user['id']}, {'$set': {'pending_mcq': {}}})
+    user = await db.users.find_one({'id': user['id']}, {'_id': 0})
+    return await _finalize_or_next_stage(user, request, response)
+
 
 @router.get('/auth/login-history', response_model=list[LoginHistoryEvent])
 async def login_history(authorization: str | None = Header(default=None)):
@@ -1008,6 +1140,7 @@ async def get_vip_settings(authorization: str | None = Header(default=None)):
         'engineer_blob_bytes': len((vs.get('engineer_blob') or '').encode()),
         'engineer_blob_max': VIP_ENGINEER_MAX_BYTES,
         'devices': vs.get('devices') or [],
+        'login_windows': vs.get('login_windows') or [],
     }
 
 @router.put('/vip/settings')
@@ -1029,6 +1162,7 @@ async def put_vip_settings(data: VipSettingsIn, authorization: str | None = Head
         'vip_settings.session_timeout_min': data.session_timeout_min,
         'vip_settings.self_destruct_at': data.self_destruct_at,
         'vip_settings.theme': data.theme,
+        'vip_settings.login_windows': [w for w in data.login_windows if isinstance(w, dict)],
     }
     await db.users.update_one({'id': claims['sub']}, {'$set': updates})
     await log_event(claims['sub'], 'VIP_SETTINGS', 'updated')
@@ -1073,10 +1207,75 @@ async def vip_engineer_put(data: EngineerBlobIn, authorization: str | None = Hea
     return {'ok': True, 'bytes': size, 'max_bytes': VIP_ENGINEER_MAX_BYTES}
 
 
+# ---- WHO Pass + MCQ Pass setup (VIP only) ----
+@router.get('/vip/who-pass')
+async def get_who_pass(authorization: str | None = Header(default=None)):
+    claims, u = await require_vip(authorization)
+    who = u.get('who_pass') or {}
+    return {'enabled': bool(who.get('enabled')), 'question': who.get('question', ''), 'case_sensitive': bool(who.get('case_sensitive', True))}
+
+@router.put('/vip/who-pass')
+async def put_who_pass(data: WhoPassIn, authorization: str | None = Header(default=None)):
+    claims, u = await require_vip(authorization)
+    answer = data.answer if data.case_sensitive else data.answer.lower()
+    await db.users.update_one({'id': claims['sub']}, {'$set': {'who_pass': {'enabled': data.enabled, 'question': data.question, 'answer_hash': hashlib.sha256(answer.encode()).hexdigest(), 'case_sensitive': data.case_sensitive, 'fails': 0}}})
+    await log_event(claims['sub'], 'WHO_SETUP', f'enabled={data.enabled}')
+    return {'ok': True}
+
+@router.get('/vip/mcq-pass')
+async def get_mcq_pass(authorization: str | None = Header(default=None)):
+    claims, u = await require_vip(authorization)
+    m = u.get('mcq_pass') or {}
+    # Return questions but strip correct_idx so an attacker with VIP settings read can't just read answers.
+    sanitized = [{'q': q.get('q',''), 'options': q.get('options', []), 'correct_idx': q.get('correct_idx', 0)} for q in (m.get('questions') or [])]
+    return {'enabled': bool(m.get('enabled')), 'time_limit_sec': m.get('time_limit_sec', 60), 'questions': sanitized}
+
+@router.put('/vip/mcq-pass')
+async def put_mcq_pass(data: McqPassIn, authorization: str | None = Header(default=None)):
+    claims, u = await require_vip(authorization)
+    qs = []
+    for q in data.questions:
+        if q.correct_idx >= len(q.options):
+            raise HTTPException(400, 'correct_idx out of range for one of the questions')
+        qs.append({'q': q.q, 'options': q.options, 'correct_idx': q.correct_idx})
+    await db.users.update_one({'id': claims['sub']}, {'$set': {'mcq_pass': {'enabled': data.enabled, 'time_limit_sec': data.time_limit_sec, 'questions': qs}}})
+    await log_event(claims['sub'], 'MCQ_SETUP', f'enabled={data.enabled} count={len(qs)}')
+    return {'ok': True}
+
+
+# ---- Super VIP demo tier ----
+SUPER_VIP_PRICE_USD = 5.0
+SUPER_VIP_DURATION_DAYS = 365
+
+@router.post('/vip/super-purchase')
+async def super_vip_purchase(authorization: str | None = Header(default=None)):
+    """DEMO Super VIP purchase. 1-year duration. Grants VIP + Super VIP."""
+    claims = auth_user(authorization)
+    u = await db.users.find_one({'id': claims['sub']}, {'_id': 0})
+    if not u: raise HTTPException(404, 'User not found')
+    now = datetime.now(timezone.utc)
+    base = now
+    if is_super_vip_active(u):
+        try:
+            base = max(base, parse_iso_datetime(u['super_vip_until']))
+        except Exception:
+            pass
+    new_until = (base + timedelta(days=SUPER_VIP_DURATION_DAYS)).isoformat()
+    purchase = {'id': str(uuid.uuid4()), 'ts': now.isoformat(), 'amount_usd': SUPER_VIP_PRICE_USD, 'provider': 'demo', 'tier': 'super_vip', 'days': SUPER_VIP_DURATION_DAYS}
+    await db.users.update_one({'id': claims['sub']}, {'$set': {'super_vip_until': new_until, 'vip_until': new_until}, '$push': {'vip_purchases': purchase}})
+    await log_event(claims['sub'], 'SUPER_VIP_PURCHASE', 'demo')
+    u = await db.users.find_one({'id': claims['sub']}, {'_id': 0})
+    return {'ok': True, 'user': public_user(u), 'purchase': purchase}
+
+
 @router.get('/admin/stats')
-async def admin_stats(authorization: str | None = Header(default=None)):
+async def admin_stats(authorization: str | None = Header(default=None), period: str = '1m'):
     user=auth_user(authorization)
     if not user.get('is_admin'): raise HTTPException(403,'Owner access only')
+    # Period window for login + revenue slices. Values: 1m (30d), 5m (150d), 1y (365d).
+    days_map = {'1m': 30, '5m': 150, '1y': 365}
+    period_days = days_map.get(period, 30)
+    period_start_iso = (datetime.now(timezone.utc) - timedelta(days=period_days)).isoformat()
     today=datetime.now(timezone.utc).replace(hour=0,minute=0,second=0,microsecond=0).isoformat()
     total_users=await db.users.count_documents({})
     total_items=await db.items.count_documents({})
@@ -1084,6 +1283,7 @@ async def admin_stats(authorization: str | None = Header(default=None)):
     today_logins=await db.audit.count_documents({'action':'LOGIN','ts':{'$gt':today}})
     week_ago=(datetime.now(timezone.utc)-timedelta(days=7)).isoformat()
     week_logins=await db.audit.count_documents({'action':'LOGIN','ts':{'$gt':week_ago}})
+    period_logins=await db.audit.count_documents({'action':'LOGIN','ts':{'$gt':period_start_iso}})
     pending=await db.recovery_requests.count_documents({'status':'pending'})
     requests=await db.recovery_requests.find({'status':'pending'},{'_id':0}).sort('created_at',-1).to_list(50)
     online_today=await db.users.count_documents({'last_seen':{'$gt':today}})
@@ -1091,23 +1291,36 @@ async def admin_stats(authorization: str | None = Header(default=None)):
     # VIP metrics (M1–M5)
     now_iso = datetime.now(timezone.utc).isoformat()
     vip_active = await db.users.count_documents({'vip_until': {'$gt': now_iso}})
+    super_vip_active = await db.users.count_documents({'super_vip_until': {'$gt': now_iso}})
     vip_purchases_agg = await db.users.aggregate([
         {'$project': {'count': {'$size': {'$ifNull': ['$vip_purchases', []]}}}},
         {'$group': {'_id': None, 'total': {'$sum': '$count'}}},
     ]).to_list(1)
     vip_sold_total = vip_purchases_agg[0]['total'] if vip_purchases_agg else 0
+    # Period revenue: sum vip_purchases entries whose ts >= period_start_iso.
+    revenue_agg = await db.users.aggregate([
+        {'$unwind': {'path': '$vip_purchases', 'preserveNullAndEmptyArrays': False}},
+        {'$match': {'vip_purchases.ts': {'$gt': period_start_iso}}},
+        {'$group': {'_id': None, 'revenue': {'$sum': '$vip_purchases.amount_usd'}, 'count': {'$sum': 1}}},
+    ]).to_list(1)
+    period_revenue_usd = round((revenue_agg[0]['revenue'] if revenue_agg else 0), 2)
+    period_sold = (revenue_agg[0]['count'] if revenue_agg else 0)
     vip_revenue_usd = round(vip_sold_total * VIP_PRICE_USD, 2)
     hardcore_users = await db.users.count_documents({'hardcore_enabled': True})
     totp_items = await db.items.count_documents({'totp_enc': {'$exists': True}})
     return {
+        'period': period, 'period_days': period_days,
         'total_users':total_users,'total_items':total_items,'adv_items':adv_items,
-        'today_logins':today_logins,'week_logins':week_logins,
+        'today_logins':today_logins,'week_logins':week_logins,'period_logins':period_logins,
         'online_today':online_today,'online_now':online_now,
         'pending_recovery':pending,'recovery_requests':requests,
         # VIP metrics
         'vip_active': vip_active,
+        'super_vip_active': super_vip_active,
         'vip_sold_total': vip_sold_total,
         'vip_revenue_usd': vip_revenue_usd,
+        'period_revenue_usd': period_revenue_usd,
+        'period_sold': period_sold,
         'hardcore_users': hardcore_users,
         'totp_items': totp_items,
     }
