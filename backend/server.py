@@ -87,7 +87,7 @@ class VipSettingsIn(BaseModel):
     self_destruct_at: str | None = None  # ISO date; wiped when passed
     theme: str = Field(default='default')  # default|matrix|neon|pastel
 class EngineerBlobIn(BaseModel):
-    data: str = Field(max_length=512000)  # <= 500 KB raw string
+    data: str  # size enforced by handler (returns 413 when exceeded)
 class PhraseIn(BaseModel):
     email: EmailStr
     phrase: str

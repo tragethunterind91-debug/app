@@ -1,0 +1,35 @@
+{
+  "summary": "Iteration 3 — comprehensive backend validation of the 10 new VIP capabilities + policy hooks + regression smoke. New file /app/backend/tests/test_vip_features.py with 19 tests, 19/19 pass. Covered: /api/vip/settings GET+PUT (admin 200, non-VIP 402, invalid theme 400, past self_destruct 400, round-trip persist), custom session_timeout_min=5 verified by decoding the JWT exp claim (~5min), POST /vip/logout-all rotates jwt_salt and the OLD token now returns 401 'Signed out from all devices' on /vip/settings, /vip/devices list (cap=2) + DELETE, engineer blob round-trip + >500 KB rejected (422 from Pydantic max_length, which is stricter than the planned 413 and still a valid rejection), share link v2 (password required → 401 without, 200 with, 410 after max_views=2 exhausted; non-VIP using these fields → 402), free-tier Advance Mode cap enforced at 3 (4th → 402 with 'Advance Mode' message), scheduled self-destruct (set 2s in future, slept 3s, items wiped + follow-up VIP call rejected), free trusted-device cap=1 (second login with different User-Agent → 403 'Device limit reached'), VIP IP allowlist (login from 9.9.9.9 → 403 'Login blocked: IP ... not on your allowlist'), VIP country allowlist works at backend level (verified via localhost:8001 because the public ingress strips 'cf-ipcountry'), theme='neon' reflected in /auth/me public_user payload, admin items CRUD + /admin/stats regression still green.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/auth/login (cf-ipcountry header)", "issue": "The Kubernetes ingress in front of the preview URL strips the 'cf-ipcountry' request header, so the country-allowlist policy will never fire in production unless real Cloudflare injects it. Backend code reads it correctly (verified by hitting http://localhost:8001 directly). Consider documenting that this feature requires a Cloudflare front end, or add a second header fallback like 'x-geo-country' that the ingress preserves."},
+      {"endpoint": "PUT /api/vip/engineer/blob", "issue": "Oversize payloads are rejected with 422 (FastAPI/Pydantic max_length=512000) before the handler's own 413 check runs. Functionally equivalent (payload still rejected), but the planned 413 'engineer blob exceeds...' message is never emitted. If a specific status is required, loosen the Pydantic constraint and keep only the handler-level 413."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_vip_features.py",
+    "/app/test_reports/pytest/iter3_results.xml"
+  ],
+  "action_items": [
+    "Decide whether the engineer-blob size rejection should return 413 (loosen Pydantic max_length to let the handler enforce) or keep 422 and update docs.",
+    "Document / harden the country-allowlist feature: 'cf-ipcountry' is stripped by the preview ingress — rely on real Cloudflare in prod or accept an alternate header the ingress preserves."
+  ],
+  "critical_code_review_comments": [
+    "server.py is now ~1370 lines — well past the 700-line guideline. Split into routers (auth, items, vip, shares, admin) in a follow-up.",
+    "put_vip_settings has no partial-update semantics: every PUT overwrites allowed_ips/allowed_countries/theme/session_timeout_min with whatever is in the body (empty default_factory=list means a client that only wants to change theme will accidentally wipe their IP/country allowlists). Consider PATCH semantics or make fields Optional with None=keep-existing.",
+    "Self-destruct wipes items + shares but leaves vip_settings.devices, preferences, password_history, login_history, recovery intact — compare with delete_hardcore_account which wipes those too. Decide whether 'self-destruct' means vault only or account-wide.",
+    "verify_fresh_session is only called from the two /vip/settings handlers via require_vip. Other VIP-adjacent endpoints (logout-all, devices, engineer blob) also use require_vip and are covered — good. But non-VIP endpoints (/items, /auth/me, /audit, etc.) do not re-check jwt_salt, so a logged-out-everywhere free user could still read /items with the old token until exp. Low severity for free users (no salt rotation path exists for them), but worth noting if the pattern is extended.",
+    "Trusted-device cap uses SHA-256(user-agent)[:16] as the device key — easily spoofable and does not include IP, so a user who switches browsers legitimately gets locked out. Consider UA+client-ip or a cookie-based device-id.",
+    "_enforce_vip_login_policy swallows all exceptions around self-destruct parsing (bare except: pass). A malformed self_destruct_at would silently become a no-op; prefer logging."
+  ],
+  "updated_files": ["/app/backend/tests/test_vip_features.py"],
+  "success_rate": {"backend": "100% (19/19)", "frontend": "n/a (backend-only run)"},
+  "test_credentials": "admin@example.com / AdminPass123! / 1990-01-01 (admin is kept VIP across the run via POST /api/vip/purchase at module setup).",
+  "seed_data_creation": "~7 throwaway test_<uuid>@test.com users created during the run (register limit is 10/hour — within budget). All TEST_* items are cleaned up by the share test; a couple of TEST_adv_* items from the free-tier advance cap test remain on their throwaway users (safe to leave, user never logs in again).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "All 10 VIP capabilities + 4 policy hooks + regression smoke are verified in /app/backend/tests/test_vip_features.py (JUnit at /app/test_reports/pytest/iter3_results.xml). The suite is self-contained and idempotent — safe to re-run. Known env quirk: 'cf-ipcountry' is stripped by the preview ingress, so the country-allowlist test hits http://localhost:8001 directly; everything else uses REACT_APP_BACKEND_URL. If you need to re-run and admin ends up locked out by a VIP policy test, no cleanup is required because every policy mutation is done via fresh throwaway users (admin is only used for settings get/put basic + theme reset which the test restores to 'default').",
+  "rca of the issue": "No bugs reproduced this run; the two minor items above are design/env observations, not defects."
+}
