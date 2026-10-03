@@ -76,6 +76,18 @@ class BulkActionIn(BaseModel):
     category: str | None = None  # for 'move'
 class ShareIn(BaseModel):
     hours: int = Field(default=24, ge=1, le=168)
+    max_views: int | None = Field(default=None, ge=1, le=1000)  # VIP: cap total views
+    password: str | None = Field(default=None, min_length=1, max_length=200)  # VIP: require passcode
+class ShareConsumeIn(BaseModel):
+    password: str | None = None
+class VipSettingsIn(BaseModel):
+    allowed_ips: list[str] = Field(default_factory=list, max_length=20)
+    allowed_countries: list[str] = Field(default_factory=list, max_length=50)  # ISO-2 codes
+    session_timeout_min: int | None = Field(default=None, ge=1, le=43200)  # 1 min - 30 days
+    self_destruct_at: str | None = None  # ISO date; wiped when passed
+    theme: str = Field(default='default')  # default|matrix|neon|pastel
+class EngineerBlobIn(BaseModel):
+    data: str = Field(max_length=512000)  # <= 500 KB raw string
 class PhraseIn(BaseModel):
     email: EmailStr
     phrase: str
@@ -100,9 +112,35 @@ class LoginHistoryEvent(BaseModel):
     device: str
     ip: str = ''
 
+FREE_ADVANCE_LIMIT = 3
+FREE_TRUSTED_DEVICES = 1
+VIP_TRUSTED_DEVICES = 2
+VIP_ENGINEER_MAX_BYTES = 500 * 1024
+VALID_THEMES = {'default', 'matrix', 'neon', 'pastel'}
+
+def default_vip_settings():
+    return {'allowed_ips': [], 'allowed_countries': [], 'session_timeout_min': None, 'self_destruct_at': None, 'theme': 'default', 'engineer_blob': '', 'devices': [], 'jwt_salt': ''}
+
+def device_id_from_request(request: Request) -> str:
+    ua = request.headers.get('user-agent', '')
+    return hashlib.sha256(ua.encode()).hexdigest()[:16]
+
+def client_ip(request: Request) -> str:
+    forwarded = request.headers.get('x-forwarded-for', '')
+    return forwarded.split(',')[0].strip() if forwarded else (request.client.host if request.client else '')
+
+def client_country(request: Request) -> str:
+    return (request.headers.get('cf-ipcountry') or request.headers.get('x-vercel-ip-country') or '').upper()
+
 def token_for(user, stage='full'):
     is_admin = user.get('email','') == os.environ.get('ADMIN_EMAIL','__none__')
-    return jwt.encode({'sub': user['id'], 'email': user['email'], 'name': user.get('name',''), 'is_admin': is_admin, 'stage': stage, 'exp': datetime.now(timezone.utc) + timedelta(hours=12)}, JWT_SECRET, algorithm='HS256')
+    # VIP users can customise session timeout; everyone else defaults to 12h.
+    timeout_min = 12 * 60
+    vs = user.get('vip_settings') or {}
+    if is_vip_active(user) and vs.get('session_timeout_min'):
+        timeout_min = int(vs['session_timeout_min'])
+    exp = datetime.now(timezone.utc) + timedelta(minutes=timeout_min)
+    return jwt.encode({'sub': user['id'], 'email': user['email'], 'name': user.get('name',''), 'is_admin': is_admin, 'stage': stage, 'salt': vs.get('jwt_salt',''), 'exp': exp}, JWT_SECRET, algorithm='HS256')
 def set_auth_cookie(response: Response, token: str):
     # SameSite=strict + httpOnly + secure. Same-origin SPA; no cross-site cookies.
     response.set_cookie(key='access_token', value=token, httponly=True, secure=True, samesite='strict', max_age=12*60*60, path='/')
@@ -130,6 +168,7 @@ def is_vip_active(u):
         return False
 def public_user(u):
     vip_active = is_vip_active(u)
+    vs = u.get('vip_settings') or {}
     return {
         'id': u['id'], 'email': u['email'], 'name': u.get('name', u['email'].split('@')[0]),
         'has_birthday': bool(u.get('birthday_hash')),
@@ -140,14 +179,38 @@ def public_user(u):
         'advance_global_locked_until': u.get('advance_global_locked_until'),
         'is_vip': vip_active,
         'vip_until': u.get('vip_until') if vip_active else None,
+        'theme': vs.get('theme', 'default'),
     }
-async def require_vip(authorization):
-    """Dependency-style guard for future VIP-only features (not applied yet)."""
-    claims = auth_user(authorization)
+async def verify_fresh_session(claims: dict) -> dict:
+    """Lightweight DB lookup used by sensitive endpoints to honour logout-all + self-destruct."""
     u = await db.users.find_one({'id': claims['sub']}, {'_id': 0})
-    if not u or not is_vip_active(u):
+    if not u:
+        raise HTTPException(401, 'User no longer exists')
+    vs = u.get('vip_settings') or {}
+    # Logout-all: tokens issued before salt rotation are rejected
+    if (vs.get('jwt_salt') or '') != (claims.get('salt') or ''):
+        raise HTTPException(401, 'Signed out from all devices. Please sign in again.')
+    # Scheduled self-destruct: wipe + reject on first access after the chosen date
+    sd = vs.get('self_destruct_at')
+    if sd:
+        try:
+            if parse_iso_datetime(sd) <= datetime.now(timezone.utc):
+                await db.items.delete_many({'user_id': u['id']})
+                await db.shares.delete_many({'user_id': u['id']})
+                await db.users.update_one({'id': u['id']}, {'$set': {'vip_settings.self_destruct_at': None, 'vip_settings.self_destructed_at': datetime.now(timezone.utc).isoformat()}})
+                raise HTTPException(410, 'Vault self-destructed as scheduled.')
+        except HTTPException:
+            raise
+        except Exception:
+            pass
+    return u
+async def require_vip(authorization):
+    """Dependency-style guard for VIP-only endpoints."""
+    claims = auth_user(authorization)
+    u = await verify_fresh_session(claims)
+    if not is_vip_active(u):
         raise HTTPException(402, 'VIP required')
-    return claims
+    return claims, u
 def safe_item(doc):
     return {'id': doc['id'], 'name': doc['name'], 'category': doc.get('category','Secret'), 'url': doc.get('url',''), 'advance_mode': doc.get('advance_mode', False), 'advance_locked_until': doc.get('advance_locked_until'), 'created_at': doc['created_at'], 'updated_at': doc['updated_at'], 'has_totp': bool(doc.get('totp_enc')), 'tags': doc.get('tags', []), 'favorite': doc.get('favorite', False), 'notes': doc.get('notes', ''), 'custom_fields': doc.get('custom_fields', [])}
 async def log_event(user_id: str, action: str, detail: str = ''):
@@ -265,6 +328,49 @@ async def record_login_history(user_id: str, request: Request):
     forwarded = request.headers.get('x-forwarded-for', '')
     ip = forwarded.split(',')[0].strip() if forwarded else (request.client.host if request.client else '')
     await db.login_history.insert_one({'id':str(uuid.uuid4()),'user_id':user_id,'ts':datetime.now(timezone.utc).isoformat(),'device':describe_device(request.headers.get('user-agent','')),'ip':ip})
+
+async def _enforce_vip_login_policy(user, request: Request) -> tuple[bool, str]:
+    """VIP: enforce IP allowlist, country lock, scheduled self-destruct, and trusted-device cap.
+    Returns (ok, error_message). Free users are allowed through (device cap still applies).
+    Also records / promotes the current device fingerprint.
+    """
+    vs = user.get('vip_settings') or {}
+    now = datetime.now(timezone.utc)
+    # Scheduled self-destruct — wipe on first login past the chosen date
+    sd = vs.get('self_destruct_at')
+    if sd:
+        try:
+            if parse_iso_datetime(sd) <= now:
+                await db.items.delete_many({'user_id': user['id']})
+                await db.shares.delete_many({'user_id': user['id']})
+                await db.users.update_one({'id': user['id']}, {'$set': {'vip_settings.self_destruct_at': None, 'vip_settings.self_destructed_at': now.isoformat()}})
+                return False, 'Vault self-destructed as scheduled.'
+        except Exception:
+            pass
+    is_vip = is_vip_active(user)
+    ip = client_ip(request)
+    country = client_country(request)
+    if is_vip:
+        allowed_ips = vs.get('allowed_ips') or []
+        if allowed_ips and ip and ip not in allowed_ips:
+            return False, f'Login blocked: IP {ip} is not on your allowlist.'
+        allowed_countries = vs.get('allowed_countries') or []
+        if allowed_countries and country and country not in allowed_countries:
+            return False, f'Login blocked: country {country} is not on your allowlist.'
+    # Device cap — VIP = 2, Free = 1. Devices are keyed by SHA-256 of user-agent.
+    cap = VIP_TRUSTED_DEVICES if is_vip else FREE_TRUSTED_DEVICES
+    did = device_id_from_request(request)
+    devices = (vs.get('devices') or [])
+    existing = next((d for d in devices if d['id'] == did), None)
+    if existing:
+        existing['last_seen'] = now.isoformat()
+        await db.users.update_one({'id': user['id'], 'vip_settings.devices.id': did}, {'$set': {'vip_settings.devices.$.last_seen': existing['last_seen']}})
+    else:
+        if len(devices) >= cap:
+            return False, f'Device limit reached ({cap}). Remove a trusted device first.'
+        new_device = {'id': did, 'label': describe_device(request.headers.get('user-agent','')), 'ip': ip, 'first_seen': now.isoformat(), 'last_seen': now.isoformat()}
+        await db.users.update_one({'id': user['id']}, {'$push': {'vip_settings.devices': new_device}}, upsert=False)
+    return True, ''
 @router.get('/')
 async def root(): return {'message': 'CryptonVault API'}
 
@@ -329,6 +435,11 @@ async def login(data: Credentials, request: Request, response: Response):
     if not pwd.verify(data.password, user['password']):
         await _track_login_fail(user)
         raise HTTPException(401, 'Email or password is incorrect')
+    # --- VIP: IP + country allowlists + trusted-device cap ---
+    vip_ok, vip_err = await _enforce_vip_login_policy(user, request)
+    if not vip_ok:
+        await log_event(user['id'], 'LOGIN_BLOCKED', vip_err)
+        raise HTTPException(403, vip_err)
     # Password correct - check if birthday verification needed
     has_birthday = bool(user.get('birthday_hash'))
     has_l3 = user.get('layer3_enabled', False)
@@ -597,6 +708,13 @@ async def create_item(data: ItemIn, authorization: str | None = Header(default=N
     user = auth_user(authorization); now = datetime.now(timezone.utc).isoformat()
     if data.advance_mode and not data.advance_passphrase:
         raise HTTPException(400, 'Advance Mode requires a passphrase')
+    # Free-tier cap: 3 Advance Mode items. VIP: unlimited.
+    if data.advance_mode:
+        u = await db.users.find_one({'id': user['sub']}, {'_id': 0})
+        if u and not is_vip_active(u):
+            existing = await db.items.count_documents({'user_id': user['sub'], 'advance_mode': True})
+            if existing >= FREE_ADVANCE_LIMIT:
+                raise HTTPException(402, f'Free tier allows up to {FREE_ADVANCE_LIMIT} Advance Mode items. Upgrade to VIP for unlimited.')
     fp = hashlib.sha256(data.value.encode()).hexdigest()
     doc = {'id':str(uuid.uuid4()),'user_id':user['sub'],'name':data.name,'category':data.category,'secret':fernet.encrypt(data.value.encode()).decode(),'value_fingerprint':fp,'value_length':len(data.value),'created_at':now,'updated_at':now,'tags':data.tags,'favorite':data.favorite,'notes':data.notes,'custom_fields':[cf.dict() for cf in data.custom_fields]}
     if data.url: doc['url'] = data.url
@@ -874,6 +992,87 @@ async def vip_purchase(authorization: str | None = Header(default=None)):
     return {'ok': True, 'user': public_user(u), 'purchase': purchase}
 
 
+# ============================================================
+# VIP capability endpoints — one feature per block.
+# ============================================================
+@router.get('/vip/settings')
+async def get_vip_settings(authorization: str | None = Header(default=None)):
+    claims, u = await require_vip(authorization)
+    vs = u.get('vip_settings') or {}
+    return {
+        'allowed_ips': vs.get('allowed_ips') or [],
+        'allowed_countries': vs.get('allowed_countries') or [],
+        'session_timeout_min': vs.get('session_timeout_min'),
+        'self_destruct_at': vs.get('self_destruct_at'),
+        'theme': vs.get('theme') or 'default',
+        'engineer_blob_bytes': len((vs.get('engineer_blob') or '').encode()),
+        'engineer_blob_max': VIP_ENGINEER_MAX_BYTES,
+        'devices': vs.get('devices') or [],
+    }
+
+@router.put('/vip/settings')
+async def put_vip_settings(data: VipSettingsIn, authorization: str | None = Header(default=None)):
+    claims, u = await require_vip(authorization)
+    if data.theme not in VALID_THEMES:
+        raise HTTPException(400, f'Invalid theme. Choose from {sorted(VALID_THEMES)}')
+    if data.self_destruct_at:
+        try:
+            if parse_iso_datetime(data.self_destruct_at) <= datetime.now(timezone.utc):
+                raise HTTPException(400, 'self_destruct_at must be in the future')
+        except HTTPException:
+            raise
+        except Exception:
+            raise HTTPException(400, 'self_destruct_at must be a valid ISO datetime')
+    updates = {
+        'vip_settings.allowed_ips': list({ip.strip() for ip in data.allowed_ips if ip.strip()}),
+        'vip_settings.allowed_countries': list({c.strip().upper() for c in data.allowed_countries if c.strip()}),
+        'vip_settings.session_timeout_min': data.session_timeout_min,
+        'vip_settings.self_destruct_at': data.self_destruct_at,
+        'vip_settings.theme': data.theme,
+    }
+    await db.users.update_one({'id': claims['sub']}, {'$set': updates})
+    await log_event(claims['sub'], 'VIP_SETTINGS', 'updated')
+    return {'ok': True}
+
+@router.post('/vip/logout-all')
+async def vip_logout_all(authorization: str | None = Header(default=None)):
+    claims, u = await require_vip(authorization)
+    new_salt = secrets.token_urlsafe(16)
+    await db.users.update_one({'id': claims['sub']}, {'$set': {'vip_settings.jwt_salt': new_salt, 'vip_settings.devices': []}})
+    await log_event(claims['sub'], 'VIP_LOGOUT_ALL', 'rotated jwt_salt')
+    return {'ok': True, 'message': 'All sessions revoked. Please sign in again.'}
+
+@router.get('/vip/devices')
+async def vip_devices(authorization: str | None = Header(default=None)):
+    claims, u = await require_vip(authorization)
+    vs = u.get('vip_settings') or {}
+    return {'devices': vs.get('devices') or [], 'cap': VIP_TRUSTED_DEVICES}
+
+@router.delete('/vip/devices/{device_id}')
+async def vip_remove_device(device_id: str, authorization: str | None = Header(default=None)):
+    claims, u = await require_vip(authorization)
+    await db.users.update_one({'id': claims['sub']}, {'$pull': {'vip_settings.devices': {'id': device_id}}})
+    await log_event(claims['sub'], 'VIP_DEVICE_REMOVED', device_id)
+    return {'ok': True}
+
+@router.get('/vip/engineer/blob')
+async def vip_engineer_get(authorization: str | None = Header(default=None)):
+    claims, u = await require_vip(authorization)
+    vs = u.get('vip_settings') or {}
+    blob = vs.get('engineer_blob') or ''
+    return {'data': blob, 'bytes': len(blob.encode()), 'max_bytes': VIP_ENGINEER_MAX_BYTES}
+
+@router.put('/vip/engineer/blob')
+async def vip_engineer_put(data: EngineerBlobIn, authorization: str | None = Header(default=None)):
+    claims, u = await require_vip(authorization)
+    size = len(data.data.encode())
+    if size > VIP_ENGINEER_MAX_BYTES:
+        raise HTTPException(413, f'Engineer blob exceeds {VIP_ENGINEER_MAX_BYTES} bytes (got {size}).')
+    await db.users.update_one({'id': claims['sub']}, {'$set': {'vip_settings.engineer_blob': data.data}})
+    await log_event(claims['sub'], 'VIP_ENGINEER_WRITE', f'{size} bytes')
+    return {'ok': True, 'bytes': size, 'max_bytes': VIP_ENGINEER_MAX_BYTES}
+
+
 @router.get('/admin/stats')
 async def admin_stats(authorization: str | None = Header(default=None)):
     user=auth_user(authorization)
@@ -929,16 +1128,38 @@ async def share_item(item_id: str, data: ShareIn, authorization: str | None = He
     if not doc: raise HTTPException(404,'Item not found')
     if doc.get('advance_mode'):
         raise HTTPException(403, 'Advance Mode items cannot be shared')
-    token=secrets.token_urlsafe(20); await db.shares.insert_one({'token':token,'item_id':item_id,'user_id':user['sub'],'expires':(datetime.now(timezone.utc)+timedelta(hours=data.hours)).isoformat()}); await log_event(user['sub'],'SHARE',doc['name']); return {'token':token,'hours':data.hours}
+    # VIP-only enhancements: enforce by looking up VIP state when either enhancement is used
+    want_views = data.max_views is not None
+    want_password = bool(data.password)
+    if want_views or want_password:
+        u = await db.users.find_one({'id': user['sub']}, {'_id': 0})
+        if not u or not is_vip_active(u):
+            raise HTTPException(402, 'View limits and share passwords require VIP.')
+    token=secrets.token_urlsafe(20)
+    share_doc = {'token':token,'item_id':item_id,'user_id':user['sub'],'expires':(datetime.now(timezone.utc)+timedelta(hours=data.hours)).isoformat(),'views':0}
+    if want_views:
+        share_doc['max_views'] = int(data.max_views)
+    if want_password:
+        share_doc['password_hash'] = pwd.hash(data.password)
+    await db.shares.insert_one(share_doc)
+    await log_event(user['sub'],'SHARE',doc['name'])
+    return {'token':token,'hours':data.hours,'max_views':data.max_views,'password_protected':want_password}
 
 @router.get('/share/{share_token}')
-async def get_share(share_token: str):
+async def get_share(share_token: str, password: str | None = None):
     doc=await db.shares.find_one({'token':share_token},{'_id':0})
     if not doc or datetime.fromisoformat(doc['expires'])<datetime.now(timezone.utc): raise HTTPException(404,'Share link expired')
+    # VIP: enforce password + view limit if set
+    if doc.get('password_hash'):
+        if not password or not pwd.verify(password, doc['password_hash']):
+            raise HTTPException(401, 'This share link requires a password.')
+    if doc.get('max_views') is not None and doc.get('views', 0) >= doc['max_views']:
+        raise HTTPException(410, 'Share link view limit reached.')
     item=await db.items.find_one({'id':doc['item_id']},{'_id':0})
     if not item: raise HTTPException(404,'Item not found')
     if item.get('advance_mode'): raise HTTPException(403,'This shared item is now protected by Advance Mode')
-    return {'name':item['name'],'value':fernet.decrypt(item['secret'].encode()).decode(),'expires':doc['expires']}
+    await db.shares.update_one({'token': share_token}, {'$inc': {'views': 1}})
+    return {'name':item['name'],'value':fernet.decrypt(item['secret'].encode()).decode(),'expires':doc['expires'],'views':doc.get('views',0)+1,'max_views':doc.get('max_views')}
 
 @router.post('/auth/recovery')
 @limiter.limit('5/hour')
