@@ -35,7 +35,7 @@
 | U5 | **Share link with view-limit + password** | Set max views, expiry, and a passcode on each share |
 | U6 | **Auto-check every password — liked / not** | Scheduled strength + breach check per item; thumbs-up/down per item |
 | U7 | **Delete account effective or pass after BJ date** | Scheduled self-destruct on a chosen date, with pre-notice window |
-| U8 | **Max 2 account logins per device** | Device-level account cap, prevents account farming |
+| U8 | **Max 2 trusted devices per account** | Free = 1 device, VIP = 2 devices. New device requires approval from an existing trusted device. Anti-theft + anti-sharing. |
 | U9 | **Engineer mode with saving-limit percent** | Dev/power-user mode with a quota (e.g., 500 KB per user) for raw JSON exports, API tokens, custom fields |
 | U10 | **Users / developer can save their data (≤500 KB each)** | Per-user object storage allowance for attachments inside Engineer mode |
 
@@ -98,16 +98,17 @@
 
 ---
 
-## 📈 Admin Metrics (from top of the note — track in Admin Panel)
+## 📈 Admin Metrics (track in Admin Panel)
 
-These are admin-only stats, not VIP features. Add to the admin dashboard when VIP ships:
+Admin-only stats, not VIP features. Add to the admin dashboard when VIP ships:
 
-- M1. **Total ads shown** (if ads are added to free tier)
-- M2. **Total revenue** (cumulative VIP sales × $1.50)
+- M1. **Total revenue** (cumulative VIP sales × $1.50)
+- M2. **Total VIP sold** (count of active + lifetime VIP purchases)
 - M3. **Total Hardcore Pass users** (hardcore_enabled = true count)
 - M4. **Total Advance Mode items created**
 - M5. **Total TOTP items**
-- M6. **Total VIP sold** (count of active + lifetime VIP purchases)
+
+(**No ads.** Password vaults don't ship ads — kills trust, invites tracker SDKs into the security perimeter.)
 
 ---
 
@@ -131,5 +132,5 @@ These are admin-only stats, not VIP features. Add to the admin dashboard when VI
 - **a. Payment:** fake / demo button only. Backend flips `vip_until` directly on click. No Stripe. Easy to swap later.
 - **b. Renew model:** one-time **75-day** purchase, expires silently. User can re-buy anytime. No subscription webhooks.
 - **c. On expiry:** silent auto-downgrade to free. Vault stays fully read+write; only VIP-only features (U/V items) lock.
-- **d. "2 account logins per device":** interpreted as **2 accounts max per device** (anti-farming). Enforce via device fingerprint.
-- **e. Ads metric:** track-only, no ads shown.
+- **d. "2 device trust limit":** interpreted as **max 2 trusted devices per account** (anti-theft + anti-sharing). Free = 1 device, VIP = 2. New device requires approval from existing one.
+- **e. Ads:** dropped entirely. Password vaults don't ship ads. M1 metric removed.
