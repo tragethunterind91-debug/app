@@ -126,10 +126,10 @@ These are admin-only stats, not VIP features. Add to the admin dashboard when VI
 
 ---
 
-## ❗ Open Questions (ask user before building)
+## ❗ Decisions locked in (3 Oct 2026)
 
-- **a.** Payment provider — Stripe (recommended, test key already in environment) or Razorpay (India)?
-- **b.** Should VIP auto-renew at 75-day cycles, or one-time purchase that expires?
-- **c.** What happens when VIP expires? Downgrade silently, or lock vault to read-only until renewed?
-- **d.** For "2 account login device max" (U8) — is that **2 accounts total on this device** (anti-farming) or **2 devices per account** (anti-sharing)? The note is ambiguous.
-- **e.** Does "ads" (M1) mean you plan to add ads to free tier, or just track if we ever do?
+- **a. Payment:** fake / demo button only. Backend flips `vip_until` directly on click. No Stripe. Easy to swap later.
+- **b. Renew model:** one-time **75-day** purchase, expires silently. User can re-buy anytime. No subscription webhooks.
+- **c. On expiry:** silent auto-downgrade to free. Vault stays fully read+write; only VIP-only features (U/V items) lock.
+- **d. "2 account logins per device":** interpreted as **2 accounts max per device** (anti-farming). Enforce via device fingerprint.
+- **e. Ads metric:** track-only, no ads shown.
